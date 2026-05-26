@@ -32,10 +32,16 @@ FILENAME_VERSION_RE = re.compile(r"-v(\d+)\.ya?ml$", re.IGNORECASE)
 
 
 def sha256_of(path: Path) -> str:
+    """SHA-256 of the file with line endings normalised to LF.
+
+    Git on Windows may check files out with CRLF when autocrlf is enabled,
+    while Linux CI runners get LF. Normalising before hashing ensures the
+    same content yields the same hash on every platform.
+    """
     h = hashlib.sha256()
     with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
+        data = fh.read()
+    h.update(data.replace(b"\r\n", b"\n"))
     return h.hexdigest()
 
 
