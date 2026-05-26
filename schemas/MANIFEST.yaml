@@ -1,0 +1,70 @@
+manifestVersion: 1
+generator: schemas/_build_manifest.py @ initial-commit; release workflow regenerates
+  at tag time
+contracts:
+- relative_path: bronze/bronze-asde-incident-push-v1.yaml
+  name: Bronze ASDE Incident Liability Push
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: 9092453dde1083da28b6e158327370ebdc7f7894a077202ffe73c73e31f97452
+- relative_path: bronze/bronze-ccav-kpi-v1.yaml
+  name: Bronze CCAV Regulatory KPI
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: ac817d6daa5c3364bfac40cf60fb1289f6024f64b77fababacf75c163ad79115
+- relative_path: bronze/bronze-ccav-tx-log-v1.yaml
+  name: Bronze CCAV Regulatory Transaction Log
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: 0fc9c8cc691e674a6c837b560f4ff3b099e9e280196fd8372e13b64dce9760ad
+- relative_path: bronze/bronze-dvla-type-approval-v1.yaml
+  name: Bronze DVLA Type-Approval Register
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: b8974659128d7d5d0bc008a0a03947496fae63089823b284c4cf3a051f4bb2ab
+- relative_path: bronze/bronze-dvla-vehicle-registry-v1.yaml
+  name: Bronze DVLA Vehicle Registry
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: 1d2f179c612289310e1229179c7e4b5bdfe22511a6dad8495e2c5987c72d02f5
+- relative_path: bronze/bronze-dvsa-aps-perf-v1.yaml
+  name: Bronze DVSA APS Route Performance
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: 439fa6f0d2e4f84000cd1b653d39fe7b46ca7e6dc808afe35f89671bdff5b061
+- relative_path: bronze/bronze-dvsa-fleet-audit-v2.yaml
+  name: Bronze DVSA Fleet Audit
+  version: 2.0.0
+  kind: bronze
+  supersedes: ../source/dvsa-fleet-audit-v1.yaml
+  sha256: 7aacb17c9d51a1b7c79ca99291981343a9f4687be09f65ae2485d496f71b97ae
+- relative_path: bronze/bronze-dvsa-permit-register-v1.yaml
+  name: Bronze DVSA APS Permit Register
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: dddcc5470eb9a5ac995216f268bd46c22ab7fe3bb45a7e72c391768ed85de3d4
+- relative_path: bronze/bronze-ismr-occurrences-v1.yaml
+  name: Bronze NUiCO ISMR Annex 5 Occurrences
+  version: 1.0.0
+  kind: bronze
+  supersedes: null
+  sha256: 2548debb82b158f526a58fb2f6d2c41134523733040eab0b8996d3c6e1e8e691
+- relative_path: source/asde-incident-push-v1.yaml
+  name: ASDE Incident Push
+  version: 1.0.0
+  kind: source
+  supersedes: null
+  sha256: 1f6d1fbf29b4411ff082346b39cec9f91eb8c46832126b618e6d3dfc80ce9c7d
+- relative_path: source/dvsa-fleet-audit-v1.yaml
+  name: DVSA Fleet Audit
+  version: 1.0.0
+  kind: source
+  supersedes: null
+  sha256: 9551f1a00152590567f3cbd339bc4d6008098d3fa8ae5acf64bf1ff7cb7b787f

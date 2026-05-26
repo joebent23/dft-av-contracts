@@ -1,0 +1,556 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: bronze-asde-incident-push
+  name: Bronze ASDE Incident Liability Push
+  version: 1.0.0
+  status: draft
+  domain: asde
+  tenant: dft-av
+  owner:
+    name: ASDE Incident Liability Data Product Owner
+    email: data.governance@asde.example.gov.uk
+  description: >
+    Bronze landing of the ASDE-partner incident liability data package
+    pushed in near-real-time over APIM (Lane 4 — push) at the moment a
+    Statutory Inspector raises an incident investigation reference
+    (SI-INV-YYYY-NNNN). One row per liability package. The payload is
+    a flattened projection of the hero JSON schema at
+    [EXTERNAL] AV Data/.../SI-INV-2025-0001_incident_liability_package.json
+    and the three sister packages in
+    ../../../data-foundations/incidents/ (SI-INV-2025-0002 to 0004).
+    Underpins an internal scenario and an internal scenario; feeds
+    silver_incident_liability, fact_transaction, fact_parsed_evidence
+    and the Insurers and Police release products. Bound to 
+    internal-dt-ref in the DfT
+    service-design data-asset register.
+
+schema:
+  type: delta
+  location:
+    layer: bronze
+    workspace: AV-Medallion-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_asde_incident_push
+  columns:
+    - name: schema_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+$'
+      description: >
+        ASDE-partner package schema version (currently "1.0"). Source
+        JSON key "schema_version".
+    - name: document_type
+      type: string
+      nullable: false
+      enum: ["INCIDENT_LIABILITY_DATA_PACKAGE"]
+      description: >
+        Fixed payload discriminator. Source JSON key "document_type".
+    - name: investigation_reference
+      type: string
+      nullable: false
+      format: '^SI-INV-\d{4}-\d{4}$'
+      description: >
+        Statutory Inspector investigation reference (PK). The hero
+        SI-INV-2025-0001 MUST round-trip verbatim. Source JSON key
+        "investigation_reference".
+    - name: incident_date
+      type: date
+      nullable: false
+      description: >
+        ISO date the incident occurred. Source JSON key "incident_date".
+    - name: incident_location
+      type: string
+      nullable: false
+      description: >
+        Free-text human-readable location of the incident. Source JSON
+        key "incident_location".
+    - name: dt_references
+      type: array<string>
+      nullable: false
+      description: >
+        Array of Data Tracker DT references the incident touches.
+        Source JSON key "dt_references".
+    - name: vehicle_vin
+      type: string
+      nullable: false
+      description: >
+        Vehicle Identification Number — either a 17-char ISO-3779 VIN
+        for sister packages or the hero UK plate "EXAMPLEPLATE01" / "an internal scenario"
+        for SI-INV-2025-0001. Source JSON key "vehicle.vin".
+    - name: vehicle_registration_mark
+      type: string
+      nullable: true
+      description: >
+        UK registration mark of the vehicle. Source JSON key
+        "vehicle.registration_mark".
+    - name: vehicle_model_code
+      type: string
+      nullable: false
+      format: '^[A-Z]{3}-[A-Z]{3}-\d{2}$'
+      description: >
+        FK to bronze_dvla_type_approval.model_code. Source JSON key
+        "vehicle.model_code".
+    - name: vehicle_model_name
+      type: string
+      nullable: false
+      description: >
+        Human-readable model name. Source JSON key "vehicle.model_name".
+    - name: asde_reference
+      type: string
+      nullable: false
+      format: '^ASDE-CCAV-\d{4}-\d{3}$'
+      description: >
+        ASDE reference. Source JSON key "entities.asde.reference".
+    - name: asde_name
+      type: string
+      nullable: false
+      pii: PII.Party.LegalName
+      description: >
+        Legal name of the ASDE. Source JSON key "entities.asde.name".
+    - name: nuico_reference
+      type: string
+      nullable: false
+      format: '^NUICO-DVSA-\d{4}-\d{3}$'
+      description: >
+        FK to bronze_dvsa_fleet_audit.licence_reference. Source JSON
+        key "entities.nuico.reference".
+    - name: nuico_name
+      type: string
+      nullable: false
+      pii: PII.Party.LegalName
+      description: >
+        Legal name of the NUiCO. Source JSON key "entities.nuico.name".
+    - name: speed_kmh
+      type: decimal(5,1)
+      nullable: false
+      description: >
+        Vehicle speed at incident in km/h. Source JSON key
+        "technical_data.speed_kmh".
+    - name: emergency_braking_pct
+      type: decimal(4,1)
+      nullable: false
+      description: >
+        Emergency braking application percentage (0.0–100.0). Source
+        JSON key "technical_data.emergency_braking_pct".
+    - name: ads_state
+      type: string
+      nullable: false
+      enum: ["ADS_ACTIVE","ADS_DISENGAGED","ADS_FALLBACK","ADS_MRC","ADS_OFF"]
+      description: >
+        ADS engagement state at incident. Source JSON key
+        "technical_data.ads_state".
+    - name: failure_mode
+      type: string
+      nullable: false
+      description: >
+        ADS failure-mode tag (e.g. FAIL_PLANNER, FAIL_CYBER_AUTH,
+        FAIL_PERCEPTION, FAIL_V2X). Source JSON key
+        "technical_data.failure_mode".
+    - name: odd_road_type_compliance
+      type: string
+      nullable: false
+      enum: ["COMPLIANT","NON_COMPLIANT","UNKNOWN"]
+      description: >
+        Road-type ODD compliance verdict. Source JSON key
+        "odd_assessment.road_type_compliance".
+    - name: odd_speed_compliance
+      type: string
+      nullable: false
+      enum: ["COMPLIANT","NON_COMPLIANT","UNKNOWN"]
+      description: >
+        Speed-band ODD compliance verdict. Source JSON key
+        "odd_assessment.speed_compliance".
+    - name: odd_time_of_day_compliance
+      type: string
+      nullable: false
+      enum: ["COMPLIANT","NON_COMPLIANT","UNKNOWN"]
+      description: >
+        Time-of-day ODD compliance verdict. Source JSON key
+        "odd_assessment.time_of_day_compliance".
+    - name: odd_weather_compliance
+      type: string
+      nullable: false
+      enum: ["COMPLIANT","NON_COMPLIANT","UNKNOWN"]
+      description: >
+        Weather ODD compliance verdict. Source JSON key
+        "odd_assessment.weather_compliance".
+    - name: overall_odd_status
+      type: string
+      nullable: false
+      enum: ["ODD_COMPLIANT","ODD_VIOLATED","ODD_UNKNOWN"]
+      description: >
+        Overall ODD verdict. Source JSON key
+        "odd_assessment.overall_odd_status".
+    - name: cyber_incident_reference
+      type: string
+      nullable: true
+      format: '^R155-INC-[A-Z]{3}-\d{4}-\d{3}$'
+      description: >
+        Optional UN R155 cyber incident reference (e.g.
+        R155-INC-NVR-2025-001). Present only when the package includes a
+        cyber_incident block. Source JSON key
+        "cyber_incident.reference".
+    - name: cyber_incident_category
+      type: string
+      nullable: true
+      description: >
+        Optional cyber-incident category (e.g. UN_R155_CSMS_VULNERABILITY).
+        Source JSON key "cyber_incident.category".
+    - name: cyber_incident_vector
+      type: string
+      nullable: true
+      description: >
+        Optional free-text description of the attack vector. Source JSON
+        key "cyber_incident.vector".
+    - name: cyber_ads_telemetry_anomaly
+      type: string
+      nullable: true
+      description: >
+        Optional free-text description of any related ADS telemetry
+        anomaly. Source JSON key
+        "cyber_incident.ads_telemetry_anomaly".
+    - name: primary_liability
+      type: string
+      nullable: false
+      description: >
+        Free-text statement of primary liability attribution. Source
+        JSON key "liability_indicators.primary_liability".
+    - name: contributing_liability
+      type: string
+      nullable: true
+      description: >
+        Free-text statement of any contributing liability. Source JSON
+        key "liability_indicators.contributing_liability".
+    - name: active_recall_at_incident
+      type: boolean
+      nullable: false
+      description: >
+        Whether a VCA recall was active against the vehicle's model at
+        the incident date. Source JSON key
+        "liability_indicators.active_recall_at_incident".
+    - name: recall_reference
+      type: string
+      nullable: true
+      format: '^VCA-REC-(2023|2024|2025|2026)-[A-Z]{3}-\d{3}$'
+      description: >
+        Optional VCA recall reference if active_recall_at_incident is
+        true. The hero VCA-REC-2025-NVR-001 MUST appear at least once
+        (SI-INV-2025-0001). Source JSON key
+        "liability_indicators.recall_reference".
+    - name: insurance_notification_required
+      type: boolean
+      nullable: false
+      description: >
+        Whether the package triggers a regulatory insurance
+        notification. Source JSON key
+        "liability_indicators.insurance_notification_required".
+    - name: generated_date
+      type: date
+      nullable: false
+      description: >
+        ISO date the package was generated by the ASDE partner. Source
+        JSON key "generated_date".
+    - name: status
+      type: string
+      nullable: false
+      enum: ["DRAFT","FINAL","WITHDRAWN"]
+      description: >
+        Package status. Source JSON key "status".
+    - name: raw_payload
+      type: string
+      nullable: false
+      description: >
+        Verbatim JSON payload as received over APIM, preserved for
+        replay and forensic audit. Silver re-parses if the schema
+        evolves.
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: Audit column — UTC timestamp when the row landed in Bronze.
+    - name: _source_file
+      type: string
+      nullable: true
+      description: Audit column — APIM push URI / Event Grid event id.
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: Audit column — UUID linking the row to the APIM call.
+    - name: _dq_status
+      type: string
+      nullable: false
+      enum: ["PASS","QUARANTINE","FAIL"]
+      description: Audit column — DQ Gate verdict set by internal data lineage.
+    - name: _source_lane
+      type: string
+      nullable: false
+      enum: ["shortcut","mirroring","pipeline","push","portal","eventstream","openmirroring"]
+      description: Audit column — internal ingest lane (always "push" here).
+    - name: _raw_blob_path
+      type: string
+      nullable: false
+      description: >
+        Audit column — full ABFSS / S3 / queue URI of the raw payload as
+        it landed in the source landing zone. Used for forensic replay
+        and Purview lineage back to the raw blob. Supersedes the older
+        _source_file audit column (kept for backward compatibility with
+        ADR-002 v1 consumers); new ingest notebooks MUST set both to the
+        same value when the source is file-shaped.
+    - name: _contract_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+\.\d+$'
+      description: >
+        Audit column — semver of the Bronze ODCS contract under which
+        this row was written (matches metadata.version). Lets Silver and
+        the DQ Gate detect contract drift without re-reading the YAML.
+
+semantics:
+  - term: Incident Liability Package
+    definition: >
+      The ASDE-authored JSON dossier delivered at the moment a
+      Statutory Inspector raises an incident investigation, conveying
+      vehicle, ASDE, NUiCO, ODD and liability evidence for downstream
+      regulator and insurer triage.
+    relatedTerms: [SI-INV, ASDE, ODD, liability]
+  - term: ODD
+    definition: >
+      Operational Design Domain — the bounded conditions (road type,
+      speed, time of day, weather) under which the AV is approved to
+      drive itself.
+    relatedTerms: [authorisation, weather_exclusions]
+  - term: UN R155
+    definition: >
+      United Nations Regulation 155 — the type-approval requirement for
+      cybersecurity management systems and vehicle cybersecurity on AVs.
+    relatedTerms: [cyber_incident, CSMS]
+
+sla:
+  freshness:
+    expected: PT1H
+    rule: DQ-FRESH-ASDE-INC-01
+  availability:
+    target: 99.5%
+  responseTime:
+    p95: PT500MS
+
+quality:
+  rules:
+    - id: DQ-FORMAT-INV-REF-01
+      dimension: format
+      scope: column
+      column: investigation_reference
+      expression: 'rlike("^SI-INV-\\d{4}-\\d{4}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-UNIQ-INV-REF-01
+      dimension: uniqueness
+      scope: table
+      column: investigation_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CMPL-INV-REF-01
+      dimension: completeness
+      scope: column
+      column: investigation_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-FORMAT-ASDE-REF-01
+      dimension: format
+      scope: column
+      column: asde_reference
+      expression: 'rlike("^ASDE-CCAV-\\d{4}-\\d{3}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-FORMAT-NUICO-REF-01
+      dimension: format
+      scope: column
+      column: nuico_reference
+      expression: 'rlike("^NUICO-DVSA-\\d{4}-\\d{3}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONF-ODD-OVERALL-01
+      dimension: conformity
+      scope: column
+      column: overall_odd_status
+      expression: "overall_odd_status IN ('ODD_COMPLIANT','ODD_VIOLATED','ODD_UNKNOWN')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONF-ADS-STATE-01
+      dimension: conformity
+      scope: column
+      column: ads_state
+      expression: "ads_state IN ('ADS_ACTIVE','ADS_DISENGAGED','ADS_FALLBACK','ADS_MRC','ADS_OFF')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONS-CYBER-COUPLING-01
+      dimension: consistency
+      scope: cross-table
+      expression: "(cyber_incident_reference IS NULL AND cyber_incident_category IS NULL) OR (cyber_incident_reference IS NOT NULL AND cyber_incident_category IS NOT NULL)"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONS-RECALL-COUPLING-01
+      dimension: consistency
+      scope: cross-table
+      expression: "(active_recall_at_incident = false AND recall_reference IS NULL) OR (active_recall_at_incident = true AND recall_reference IS NOT NULL)"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONS-HERO-SI-INV-01
+      dimension: consistency
+      scope: table
+      expression: >
+        EXISTS (SELECT 1 FROM bronze_asde_incident_push
+                WHERE investigation_reference = 'SI-INV-2025-0001'
+                  AND recall_reference = 'VCA-REC-2025-NVR-001')
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CMPL-OVERALL-01
+      dimension: completeness
+      scope: table
+      expression: "row-level completeness >= 95"
+      threshold: 95
+      blocksRelease: true
+      severity: major
+      owner: asde-domain-steward
+    - id: DQ-FRESH-ASDE-INC-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-VOL-ASDE-INC-01
+      dimension: volume
+      scope: table
+      threshold: 100
+      blocksRelease: false
+      severity: major
+      owner: asde-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: litigation-hold-clear
+  permittedUses:
+    - statutory incident investigation by DVSA Statutory Inspectors
+    - cross-regulator liability triage (an internal scenario, an internal scenario, R155 cyber)
+    - DQ gate evaluation
+    - Insurers dossier release
+    - Police lookup release (vehicle + ASDE references only)
+  prohibitedUses:
+    - commercial profiling of operators or manufacturers
+    - PII enrichment outside the DfT consent envelope
+    - re-publication of free-text liability narrative outside DfT-AV release zones
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - asde-domain-steward (read on bronze+silver+gold)
+    - dvsa-domain-steward (read on bronze+silver+gold)
+    - vca-domain-steward (read on silver+gold)
+    - police-consumer (read on release_police)
+    - insurer-consumer (read on release_insurers)
+  rolesProhibited:
+    - everyone-else
+    - publicstats-consumer
+
+endorsement:
+  level: Certified
+  certifiedBy: ASDE Incident Liability Data Product Owner
+  certifiedAt: 2026-05-20
+
+lineage:
+  upstream:
+    - kind: apim_route
+      system: APIM dft-av-apim-ingest-{env}-swc — POST /asde/incident-liability (Lane 4 — push)
+      object: apim://dft-av-apim-ingest-{env}-swc/asde/incident-liability
+  downstream:
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_silver.silver_incident_liability
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.fact_transaction
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.fact_parsed_evidence
+    - kind: workspace_item
+      workspace: AV-Release-Insurers-{env}
+      item: insurer_evidence_pack
+    - kind: workspace_item
+      workspace: AV-Release-Police-{env}
+      item: police_vehicle_lookup
+
+history:
+  - version: 1.0.0
+    date: 2026-05-20
+    change: >
+      Initial Bronze contract derived from the hero JSON package
+      SI-INV-2025-0001_incident_liability_package.json and the three
+      sister packages SI-INV-2025-0002..0004 in
+      data-foundations/incidents/ (authored by the stretches agent).
+    author: internal data engineering
+    breaking: false
+    approvers:
+      - ASDE Incident Liability Data Product Owner
+      - DVSA Statutory Inspector Data Product Owner
+      - Insurers release Data Product Owner
+
+customProperties:
+  dft-av.owner-agency: ASDE
+  dft-av.sensitivity: OFFICIAL-SENSITIVE
+  dft-av.dt-reference: internal-dt-ref
+  dft-av.hero-scenarios:
+    - internal-scenario-1
+    - internal-scenario-2
+    - internal-scenario-3
+  dft-av.pii-present: true
+  dft-av.zone-of-trust: partner-shared
+  dft-av.volume.rows-per-day-expected: 5
+  dft-av.volume.rows-per-day-tolerance-low-pct: 100
+  dft-av.volume.rows-per-day-tolerance-high-pct: 500
+  dft-av.latency.end-to-end: PT15M
+  dft-av.source-payload-schema: "SI-INV-2025-0001_incident_liability_package.json (schema_version 1.0)"
+  dft-av.source-payload-samples:
+    - "[EXTERNAL] AV Data/AV_Act_Documents_Markup/SI-INV-2025-0001_incident_liability_package.json"
+    - "data-foundations/incidents/SI-INV-2025-0002_incident_liability_package.json"
+    - "data-foundations/incidents/SI-INV-2025-0003_incident_liability_package.json"
+    - "data-foundations/incidents/SI-INV-2025-0004_incident_liability_package.json"
+  dft-av.hero_invariants:
+    - "investigation_reference = 'SI-INV-2025-0001' MUST appear exactly once with recall_reference = 'VCA-REC-2025-NVR-001'"
+    - "active_recall_at_incident = true IFF recall_reference IS NOT NULL"
+    - "cyber_incident_reference IS NOT NULL IFF cyber_incident_category IS NOT NULL"
+    - "raw_payload MUST preserve the original JSON byte-equal for forensic replay"
+  dft-av.poison_classes_applicable:
+    - schema-drift
+    - duplicate-keys
+    - format-violation
+    - hero-mutation
+    - referential-coupling-violation
+    - free-text-overwrite
+  dft-av.release_zone_consumers:
+    - insurer_evidence_pack
+    - police_vehicle_lookup

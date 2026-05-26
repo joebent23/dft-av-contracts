@@ -1,0 +1,346 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: bronze-ccav-tx-log
+  name: Bronze CCAV Regulatory Transaction Log
+  version: 1.0.0
+  status: draft
+  domain: ccav
+  tenant: dft-av
+  owner:
+    name: CCAV Regulatory Operations Data Product Owner
+    email: data.governance@ccav.gov.uk
+  description: >
+    Bronze landing of the individual CCAV regulatory transaction log
+    (one row per regulatory transaction with the DT reference observed,
+    invoice id, vehicle id, recall id and money fields). Source is the
+    CCAV operational data warehouse pulled via a internal data lineage Data Pipeline
+    (Lane 3 — pipeline) on a daily schedule. Carries the an internal scenario
+    invoice SI-INV-2025-0001 which underpins an internal scenario
+    scenario gate. Feeds silver_tx_transactions, fact_transaction and
+    fact_payment. Bound to internal-dt-ref–internal-dt-ref in the DfT service-design
+    data-asset register.
+
+schema:
+  type: delta
+  location:
+    layer: bronze
+    workspace: AV-Medallion-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_ccav_tx_log
+  columns:
+    - name: process
+      type: string
+      nullable: false
+      enum: ["Registration","In Use Regulation","Approval","Operator Licensing","Authorisation","Incident Investigation"]
+      description: >
+        AV Act regulatory process this transaction belongs to. Closed
+        vocabulary per synth-rules table 2. Source CSV header "Process".
+    - name: transaction_count
+      type: integer
+      nullable: false
+      description: >
+        Always 1 per row — each row represents exactly one transaction.
+        Source CSV header "Transaction Count".
+    - name: dt_references_observed
+      type: string
+      nullable: false
+      description: >
+        Single DT reference (e.g. "internal-dt-ref") drawn from the per-process
+        pool defined in the analyst synth-rules. Source CSV header "DT
+        References Observed".
+    - name: invoice_id
+      type: string
+      nullable: false
+      format: '^(SI-INV-\d{4}-\d{4}|INV-\d{4}-\d{6}-[A-Z0-9]{6})$'
+      description: >
+        Invoice / case reference. The hero invoice SI-INV-2025-0001 MUST
+        appear exactly once; all other rows match the synthetic
+        INV-YYYY-NNNNNN-XXXXXX pattern.
+    - name: vehicle_id
+      type: string
+      nullable: true
+      description: >
+        Vehicle natural key — either a 17-char ISO-3779 VIN or the hero
+        UK registration plate "EXAMPLEPLATE01" (kept verbatim once per
+        synth-rules). May be null for non-vehicle-bound transactions.
+    - name: recall_id
+      type: string
+      nullable: true
+      format: '^VCA-REC-(2023|2024|2025|2026)-[A-Z]{3}-\d{3}$'
+      description: >
+        Optional VCA recall reference if the transaction is linked to an
+        active recall. ~98% of rows are null; the hero
+        VCA-REC-2025-NVR-001 MUST appear at least once.
+    - name: tx_date
+      type: timestamp
+      nullable: false
+      description: >
+        UTC timestamp the transaction was recorded by CCAV. Hero row =
+        2025-07-14T14:30:00Z.
+    - name: payment_date
+      type: timestamp
+      nullable: true
+      description: >
+        UTC timestamp of any associated fee/fine payment. Must be >=
+        tx_date when present. Hero row = 2025-07-15T09:00:00Z.
+    - name: amount_gbp
+      type: decimal(10,2)
+      nullable: true
+      description: >
+        Money amount in GBP for any associated fee or fine. Hero row =
+        12500.00. May be null for no-charge transactions.
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: Audit column — UTC timestamp when the row landed in Bronze.
+    - name: _source_file
+      type: string
+      nullable: true
+      description: Audit column — source CSV filename or URI.
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: Audit column — UUID linking the row to the ingest batch / API call.
+    - name: _dq_status
+      type: string
+      nullable: false
+      enum: ["PASS","QUARANTINE","FAIL"]
+      description: Audit column — DQ Gate verdict set by internal data lineage.
+    - name: _source_lane
+      type: string
+      nullable: false
+      enum: ["shortcut","mirroring","pipeline","push","portal","eventstream","openmirroring"]
+      description: Audit column — internal ingest lane that delivered this row.
+    - name: _raw_blob_path
+      type: string
+      nullable: false
+      description: >
+        Audit column — full ABFSS / S3 / queue URI of the raw payload as
+        it landed in the source landing zone. Used for forensic replay
+        and Purview lineage back to the raw blob. Supersedes the older
+        _source_file audit column (kept for backward compatibility with
+        ADR-002 v1 consumers); new ingest notebooks MUST set both to the
+        same value when the source is file-shaped.
+    - name: _contract_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+\.\d+$'
+      description: >
+        Audit column — semver of the Bronze ODCS contract under which
+        this row was written (matches metadata.version). Lets Silver and
+        the DQ Gate detect contract drift without re-reading the YAML.
+
+semantics:
+  - term: Regulatory Transaction
+    definition: >
+      A single discrete AV Act regulatory action (issuance, audit,
+      payment, recall action, incident report) keyed by DT reference and
+      uniquely identified by invoice_id at the transaction grain.
+    relatedTerms: [DT_reference, invoice_id, process]
+  - term: Hero Invoice
+    definition: >
+      The canonical an internal scenario incident invoice SI-INV-2025-0001 used as
+      the an internal scenario cross-regulator round-trip witness. Round-trips verbatim
+      through Bronze, Silver and Gold.
+    relatedTerms: [internal-scenario-1, invoice_id]
+
+sla:
+  freshness:
+    expected: PT24H
+    rule: DQ-FRESH-CCAV-TX-01
+  availability:
+    target: 99%
+
+quality:
+  rules:
+    - id: DQ-CONF-CCAV-PROCESS-02
+      dimension: conformity
+      scope: column
+      column: process
+      expression: "process IN ('Registration','In Use Regulation','Approval','Operator Licensing','Authorisation','Incident Investigation')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-FORMAT-INVOICE-ID-01
+      dimension: format
+      scope: column
+      column: invoice_id
+      expression: 'rlike("^(SI-INV-\\d{4}-\\d{4}|INV-\\d{4}-\\d{6}-[A-Z0-9]{6})$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-UNIQ-INVOICE-ID-01
+      dimension: uniqueness
+      scope: table
+      column: invoice_id
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-CMPL-INVOICE-ID-01
+      dimension: completeness
+      scope: column
+      column: invoice_id
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-FORMAT-RECALL-ID-01
+      dimension: format
+      scope: column
+      column: recall_id
+      expression: 'recall_id IS NULL OR rlike(recall_id, "^VCA-REC-(2023|2024|2025|2026)-[A-Z]{3}-\\d{3}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-CONS-PAYMENT-ORDER-01
+      dimension: consistency
+      scope: cross-table
+      expression: "payment_date IS NULL OR payment_date >= tx_date"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-RANGE-AMOUNT-GBP-01
+      dimension: accuracy
+      scope: column
+      column: amount_gbp
+      expression: "amount_gbp IS NULL OR (amount_gbp >= 0 AND amount_gbp <= 100000)"
+      threshold: 100
+      blocksRelease: false
+      severity: major
+      owner: ccav-domain-steward
+    - id: DQ-CONS-HERO-INVOICE-01
+      dimension: consistency
+      scope: table
+      expression: >
+        EXISTS (SELECT 1 FROM bronze_ccav_tx_log
+                WHERE invoice_id = 'SI-INV-2025-0001'
+                  AND vehicle_id = 'EXAMPLEPLATE01'
+                  AND recall_id = 'VCA-REC-2025-NVR-001'
+                  AND amount_gbp = 12500.00)
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-CMPL-OVERALL-01
+      dimension: completeness
+      scope: table
+      expression: "row-level completeness >= 95"
+      threshold: 95
+      blocksRelease: true
+      severity: major
+      owner: ccav-domain-steward
+    - id: DQ-FRESH-CCAV-TX-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: ccav-domain-steward
+    - id: DQ-VOL-CCAV-TX-01
+      dimension: volume
+      scope: table
+      threshold: 100
+      blocksRelease: false
+      severity: major
+      owner: ccav-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: expiry
+  permittedUses:
+    - statutory regulatory oversight by CCAV, DVSA and VCA
+    - cross-regulator hero-gate evaluation (an internal scenario, an internal scenario)
+    - DQ gate evaluation
+    - regulatory-fee finance reconciliation
+  prohibitedUses:
+    - commercial profiling of operators or vehicles
+    - PII enrichment outside the DfT consent envelope
+    - resale or onward distribution outside DfT-AV release zones
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - ccav-domain-steward (read on bronze+silver+gold)
+    - dvsa-domain-steward (read on silver+gold)
+    - licensing-consumer (read on release_licensing)
+  rolesProhibited:
+    - everyone-else
+    - publicstats-consumer
+
+endorsement:
+  level: Promoted
+  certifiedBy: CCAV Data Product Owner
+  certifiedAt: 2026-05-20
+
+lineage:
+  upstream:
+    - kind: external
+      system: CCAV Regulatory Operations Warehouse (Lane 3 — Data Pipeline)
+      object: azure-sql://sqldb-ccav-ops-prod/dbo.regulatory_transaction_log
+  downstream:
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_silver.silver_tx_transactions
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.fact_transaction
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.fact_payment
+    - kind: workspace_item
+      workspace: AV-Release-Insurers-{env}
+      item: insurer_evidence_pack
+    - kind: workspace_item
+      workspace: AV-Release-Licensing-{env}
+      item: release_licensing_cross_check
+
+history:
+  - version: 1.0.0
+    date: 2026-05-20
+    change: Initial Bronze contract derived from CCAV-TXN-LOG-2026_regulatory_transaction_log.csv and synth-rules.md table 2.
+    author: internal data engineering
+    breaking: false
+    approvers:
+      - CCAV Regulatory Operations Data Product Owner
+
+customProperties:
+  dft-av.owner-agency: CCAV
+  dft-av.sensitivity: OFFICIAL-SENSITIVE
+  dft-av.dt-reference: internal-dt-ref-internal-dt-ref
+  dft-av.hero-scenarios:
+    - internal-scenario-1
+    - internal-scenario-2
+  dft-av.pii-present: false
+  dft-av.zone-of-trust: internal
+  dft-av.volume.rows-per-day-expected: 200
+  dft-av.volume.rows-per-day-tolerance-low-pct: 50
+  dft-av.volume.rows-per-day-tolerance-high-pct: 100
+  dft-av.latency.end-to-end: PT4H
+  dft-av.source-csv-headers:
+    - "Process"
+    - "Transaction Count"
+    - "DT References Observed"
+  dft-av.source-csv-sample: "[EXTERNAL] AV Data/AV_Act_Documents_Markup/CCAV-TXN-LOG-2026_regulatory_transaction_log.csv"
+  dft-av.hero_invariants:
+    - "invoice_id = 'SI-INV-2025-0001' MUST appear exactly once (vehicle_id = 'EXAMPLEPLATE01', recall_id = 'VCA-REC-2025-NVR-001', amount_gbp = 12500.00)"
+    - "vehicle_id = 'EXAMPLEPLATE01' MUST appear exactly once"
+    - "recall_id = 'VCA-REC-2025-NVR-001' MUST appear at least once"
+  dft-av.poison_classes_applicable:
+    - schema-drift
+    - duplicate-keys
+    - format-violation
+    - hero-mutation
+    - reference-integrity
+  dft-av.release_zone_consumers:
+    - insurer_evidence_pack
+    - release_licensing_cross_check

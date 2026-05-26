@@ -1,0 +1,235 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: bronze-dvla-vehicle-registry
+  name: Bronze DVLA Vehicle Registry
+  version: 1.0.0
+  status: draft
+  domain: dvla
+  tenant: dft-av
+  owner:
+    name: DVLA Vehicle Registry Data Product Owner
+    email: data.governance@dvla.gov.uk
+  description: >
+    Bronze landing of the live DVLA vehicle registry mirrored from
+    Azure SQL `dft-av-sqldb-dvla-dev-swc` via OneLake Database
+    Mirroring (Lane 2 — mirroring). One row per registered AV with
+    its VIN, current registration mark, registered keeper category,
+    associated model_code (FK to bronze_dvla_type_approval) and ASDE.
+    Carries the an internal scenario VIN `NVR07250000000032` end-to-end through
+    Silver/Gold for the an internal recall + an internal scenario failure-mode hero
+    scenarios.
+
+schema:
+  type: delta
+  location:
+    layer: bronze
+    workspace: AV-Medallion-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_dvla_vehicle_registry
+  columns:
+    - name: vin
+      type: string
+      nullable: false
+      format: '^[A-HJ-NPR-Z0-9]{17}$'
+      description: >
+        17-character Vehicle Identification Number (PK). Mirror column
+        `vin`. Hero VIN for the an internal scenario scenario is `NVR07250000000032`.
+    - name: registration_mark
+      type: string
+      nullable: false
+      description: >
+        Current GB vehicle registration mark (e.g. "AV24 PEN").
+        Mirror column `registration_mark`.
+    - name: model_code
+      type: string
+      nullable: false
+      format: '^[A-Z]{3}-[A-Z]{3}-\d{2}$'
+      description: >
+        AV model natural key — joins to bronze_dvla_type_approval.model_code.
+        Mirror column `model_code`.
+    - name: manufacturer
+      type: string
+      nullable: false
+      description: >
+        Legal name of the vehicle manufacturer. Mirror column `manufacturer`.
+    - name: asde
+      type: string
+      nullable: false
+      description: >
+        Legal name of the Authorised Self-Driving Entity. Mirror
+        column `asde`.
+    - name: keeper_category
+      type: string
+      nullable: false
+      enum: ["FLEET","RETAIL","DEMO","DISPOSED"]
+      description: >
+        Registered-keeper classification. Closed vocabulary. Mirror
+        column `keeper_category`.
+    - name: first_registered_date
+      type: string
+      nullable: false
+      description: >
+        ISO-8601 date the vehicle was first registered with DVLA.
+        Mirror column `first_registered_date`.
+    - name: status
+      type: string
+      nullable: false
+      enum: ["ACTIVE","SORN","SCRAPPED","EXPORTED"]
+      description: >
+        Current registration status. Closed vocabulary. Mirror column `status`.
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: Audit column — UTC timestamp when the row landed in Bronze.
+    - name: _source_lane
+      type: string
+      nullable: false
+      enum: ["shortcut","mirroring","pipeline","push","portal","eventstream","openmirroring"]
+      description: Audit column — internal ingest lane that delivered this row.
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: Audit column — UUID linking the row to the mirroring batch.
+    - name: _raw_blob_path
+      type: string
+      nullable: false
+      description: >
+        Audit column — source identifier for the row. For mirror-fed
+        Bronze this is the synthetic URI `mirror:dvla_vehicle_registry`.
+    - name: _contract_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+\.\d+$'
+      description: >
+        Audit column — semver of the Bronze ODCS contract under which
+        this row was written (matches metadata.version).
+
+semantics:
+  - term: VIN
+    definition: >
+      17-character Vehicle Identification Number, the global PK for a
+      physical AV across DVLA / DVSA / manufacturer / ASDE systems.
+    relatedTerms: [registration_mark, model_code]
+  - term: ASDE
+    definition: >
+      Authorised Self-Driving Entity — the legal person accountable for
+      the behaviour of the ADS in an AV. Joins to type-approval ASDE.
+    relatedTerms: [manufacturer, model_code]
+
+sla:
+  freshness:
+    expected: PT1H
+    rule: DQ-FRESH-DVLA-VR-01
+  availability:
+    target: 99.5%
+
+quality:
+  rules:
+    - id: DQ-FORMAT-VIN-01
+      dimension: format
+      scope: column
+      column: vin
+      expression: 'rlike("^[A-HJ-NPR-Z0-9]{17}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-UNIQ-VIN-01
+      dimension: uniqueness
+      scope: table
+      column: vin
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CONF-KEEPER-CAT-01
+      dimension: conformity
+      scope: column
+      column: keeper_category
+      expression: "keeper_category IN ('FLEET','RETAIL','DEMO','DISPOSED')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CONF-STATUS-01
+      dimension: conformity
+      scope: column
+      column: status
+      expression: "status IN ('ACTIVE','SORN','SCRAPPED','EXPORTED')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-FRESH-DVLA-VR-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: expiry
+  permittedUses:
+    - statutory regulatory oversight by DVLA, VCA and DVSA
+    - cross-regulator recall exposure detection (an internal scenario, an internal scenario)
+    - DQ gate evaluation
+  prohibitedUses:
+    - commercial profiling of keepers or manufacturers
+    - publication of identifiable per-VIN figures outside the public stats lane
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - dvla-domain-steward (read on bronze+silver+gold)
+  rolesProhibited:
+    - everyone-else
+    - publicstats-consumer
+
+endorsement:
+  level: Promoted
+  certifiedBy: DVLA Vehicle Registry Data Product Owner
+  certifiedAt: 2026-05-22
+
+lineage:
+  upstream:
+    - kind: mirroring
+      system: DVLA AV Vehicle Registry (Lane 2 — Database Mirroring)
+      object: azure-sql://dft-av-sqldb-dvla-dev-swc/dbo.vehicle_registry
+  downstream:
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_silver.silver_vehicle_registry
+
+history:
+  - version: 1.0.0
+    date: 2026-05-22
+    change: Initial Bronze contract for the live SQL-mirrored DVLA vehicle registry (internal data engineering, ).
+    author: internal data engineering
+    breaking: false
+    approvers:
+      - DVLA Vehicle Registry Data Product Owner
+
+customProperties:
+  dft-av.owner-agency: DVLA
+  dft-av.sensitivity: OFFICIAL-SENSITIVE
+  dft-av.dt-reference: internal-dt-ref
+  dft-av.hero-scenarios:
+    - internal-scenario-2
+    - internal-scenario-1
+  dft-av.hero_invariants:
+    - "VIN NVR07250000000032 MUST survive projection into bronze_dvla_vehicle_registry"
+  dft-av.pii-present: false
+  dft-av.zone-of-trust: internal
+  dft-av.latency.end-to-end: PT2H
+  dft-av.poison_classes_applicable:
+    - schema-drift
+    - vocab-violation
+    - duplicate-keys
+    - format-violation

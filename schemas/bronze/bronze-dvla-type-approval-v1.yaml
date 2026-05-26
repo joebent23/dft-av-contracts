@@ -1,0 +1,337 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: bronze-dvla-type-approval
+  name: Bronze DVLA Type-Approval Register
+  version: 1.0.0
+  status: draft
+  domain: dvla
+  tenant: dft-av
+  owner:
+    name: DVLA Type-Approval Register Data Product Owner
+    email: data.governance@dvla.gov.uk
+  description: >
+    Bronze landing of the DVLA type-approval register listing every AV
+    model the VCA has issued a type-approval certificate for, together
+    with the ASDE, certificate reference, maximum approved speed and
+    weather exclusions. Source is the DVLA Azure SQL register replicated
+    into Fabric via OneLake Database Mirroring (Lane 2 — mirroring).
+    Underpins dim_vehicle_model and the Licensing release product;
+    consumed by an internal scenario scenario through
+    silver_recall.model_code. Bound to internal-dt-ref in the
+    DfT service-design data-asset register.
+
+schema:
+  type: delta
+  location:
+    layer: bronze
+    workspace: AV-Medallion-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_dvla_type_approval
+  columns:
+    - name: model_code
+      type: string
+      nullable: false
+      format: '^[A-Z]{3}-[A-Z]{3}-\d{2}$'
+      description: >
+        AV model natural key (e.g. "MER-SUV-01"). 3-letter manufacturer
+        prefix + 3-letter body-style + sequence. Source CSV header
+        "Model Code".
+    - name: model_name
+      type: string
+      nullable: false
+      description: >
+        Manufacturer marque + commercial model name + body style (e.g.
+        "Meridian Horizon SUV"). Source CSV header "Model Name".
+    - name: manufacturer
+      type: string
+      nullable: false
+      description: >
+        Legal name of the vehicle manufacturer. Drawn from the closed
+        seven-entry pool defined in synth-rules table 3. Source CSV
+        header "Manufacturer".
+    - name: asde
+      type: string
+      nullable: false
+      description: >
+        Legal name of the Authorised Self-Driving Entity. Most rows
+        asde == manufacturer; for some Apex models the ASDE is
+        Crestline AV Solutions Ltd. Source CSV header "ASDE".
+    - name: approval_date
+      type: string
+      nullable: false
+      description: >
+        British human-readable approval date (e.g. "14 February 2024").
+        internal data lineage parses into a typed date at Silver. Source CSV header
+        "Approval Date".
+    - name: certificate_reference
+      type: string
+      nullable: false
+      format: '^VCA-TAC-\d{4}-[A-Z]{3}-[A-Z]{3}-\d{3}$'
+      description: >
+        VCA type-approval certificate reference (PK). Year matches
+        approval_date year; MFR + TYPE match model_code. Source CSV
+        header "Certificate Reference".
+    - name: max_speed_kmh
+      type: integer
+      nullable: false
+      enum: [70, 80, 90, 100, 110, 120]
+      description: >
+        Maximum approved operating speed of the AV model in km/h. Closed
+        vocabulary {70, 80, 90, 100, 110, 120} per synth-rules table 3.
+        Source CSV header "Max Speed km/h".
+    - name: weather_exclusions
+      type: string
+      nullable: false
+      enum: ["No exclusions","Heavy rain excluded","Snow and fog excluded","Heavy rain, snow and fog excluded","Fog visibility < 50m excluded","Sub-zero icy roads excluded"]
+      description: >
+        Authorised weather envelope exclusions. Closed vocabulary per
+        synth-rules table 3. Source CSV header "Weather Exclusions".
+    - name: status
+      type: string
+      nullable: false
+      enum: ["ACTIVE","SUSPENDED","REVOKED"]
+      description: >
+        Type-approval status of the model. Closed vocabulary per
+        synth-rules. Source CSV header "Status".
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: Audit column — UTC timestamp when the row landed in Bronze.
+    - name: _source_file
+      type: string
+      nullable: true
+      description: Audit column — source object URI (mirroring snapshot file).
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: Audit column — UUID linking the row to the mirroring batch.
+    - name: _dq_status
+      type: string
+      nullable: false
+      enum: ["PASS","QUARANTINE","FAIL"]
+      description: Audit column — DQ Gate verdict set by internal data lineage.
+    - name: _source_lane
+      type: string
+      nullable: false
+      enum: ["shortcut","mirroring","pipeline","push","portal","eventstream","openmirroring"]
+      description: Audit column — internal ingest lane that delivered this row.
+    - name: _raw_blob_path
+      type: string
+      nullable: false
+      description: >
+        Audit column — full ABFSS / S3 / queue URI of the raw payload as
+        it landed in the source landing zone. Used for forensic replay
+        and Purview lineage back to the raw blob. Supersedes the older
+        _source_file audit column (kept for backward compatibility with
+        ADR-002 v1 consumers); new ingest notebooks MUST set both to the
+        same value when the source is file-shaped.
+    - name: _contract_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+\.\d+$'
+      description: >
+        Audit column — semver of the Bronze ODCS contract under which
+        this row was written (matches metadata.version). Lets Silver and
+        the DQ Gate detect contract drift without re-reading the YAML.
+
+semantics:
+  - term: Type Approval
+    definition: >
+      A VCA-issued certificate confirming an AV model meets the safety,
+      ODD and software requirements of the AV Act for placing on the
+      market in Great Britain.
+    relatedTerms: [model_code, certificate_reference, ASDE]
+  - term: ASDE
+    definition: >
+      Authorised Self-Driving Entity — the legal person accountable for
+      the behaviour of the ADS in a type-approved AV model. May or may
+      not equal the vehicle manufacturer.
+    relatedTerms: [manufacturer, model_code]
+  - term: Weather Envelope
+    definition: >
+      The set of weather conditions under which the type-approved AV
+      may legally drive itself.
+    relatedTerms: [weather_exclusions, ODD]
+
+sla:
+  freshness:
+    expected: PT1H
+    rule: DQ-FRESH-DVLA-TA-01
+  availability:
+    target: 99.5%
+
+quality:
+  rules:
+    - id: DQ-FORMAT-MODEL-CODE-01
+      dimension: format
+      scope: column
+      column: model_code
+      expression: 'rlike("^[A-Z]{3}-[A-Z]{3}-\\d{2}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-FORMAT-CERT-REF-01
+      dimension: format
+      scope: column
+      column: certificate_reference
+      expression: 'rlike("^VCA-TAC-\\d{4}-[A-Z]{3}-[A-Z]{3}-\\d{3}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-UNIQ-CERT-REF-01
+      dimension: uniqueness
+      scope: table
+      column: certificate_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CONF-MAX-SPEED-01
+      dimension: conformity
+      scope: column
+      column: max_speed_kmh
+      expression: "max_speed_kmh IN (70, 80, 90, 100, 110, 120)"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CONF-WEATHER-EXCL-01
+      dimension: conformity
+      scope: column
+      column: weather_exclusions
+      expression: "weather_exclusions IN ('No exclusions','Heavy rain excluded','Snow and fog excluded','Heavy rain, snow and fog excluded','Fog visibility < 50m excluded','Sub-zero icy roads excluded')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CONF-STATUS-01
+      dimension: conformity
+      scope: column
+      column: status
+      expression: "status IN ('ACTIVE','SUSPENDED','REVOKED')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CMPL-MODEL-CODE-01
+      dimension: completeness
+      scope: column
+      column: model_code
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-CMPL-OVERALL-01
+      dimension: completeness
+      scope: table
+      expression: "row-level completeness >= 95"
+      threshold: 95
+      blocksRelease: true
+      severity: major
+      owner: dvla-domain-steward
+    - id: DQ-FRESH-DVLA-TA-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvla-domain-steward
+    - id: DQ-VOL-DVLA-TA-01
+      dimension: volume
+      scope: table
+      threshold: 100
+      blocksRelease: false
+      severity: major
+      owner: dvla-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: expiry
+  permittedUses:
+    - statutory regulatory oversight by DVLA, VCA and DVSA
+    - cross-regulator recall exposure detection (an internal scenario, an internal scenario)
+    - DQ gate evaluation
+    - Licensing cross-check release product
+  prohibitedUses:
+    - commercial profiling of manufacturers or ASDEs
+    - publication of identifiable per-certificate figures outside the public stats lane
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - dvla-domain-steward (read on bronze+silver+gold)
+    - vca-domain-steward (read on bronze+silver+gold)
+    - licensing-consumer (read on release_licensing)
+  rolesProhibited:
+    - everyone-else
+    - publicstats-consumer
+
+endorsement:
+  level: Promoted
+  certifiedBy: DVLA Type-Approval Register Data Product Owner
+  certifiedAt: 2026-05-20
+
+lineage:
+  upstream:
+    - kind: mirroring
+      system: DVLA AV Register (Lane 2 — Database Mirroring)
+      object: azure-sql://sqldb-av-dvla-prod/dbo.type_approval_register
+  downstream:
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_silver.silver_type_approval
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.dim_vehicle_model
+    - kind: workspace_item
+      workspace: AV-Release-Licensing-{env}
+      item: release_licensing_cross_check
+
+history:
+  - version: 1.0.0
+    date: 2026-05-20
+    change: Initial Bronze contract derived from DVLA-TA-REGISTER-2026_type_approval_register.csv and synth-rules.md table 3.
+    author: internal data engineering
+    breaking: false
+    approvers:
+      - DVLA Type-Approval Register Data Product Owner
+      - Licensing release Data Product Owner
+
+customProperties:
+  dft-av.owner-agency: DVLA
+  dft-av.sensitivity: OFFICIAL-SENSITIVE
+  dft-av.dt-reference: internal-dt-ref
+  dft-av.hero-scenarios:
+    - internal-scenario-2
+  dft-av.pii-present: false
+  dft-av.zone-of-trust: internal
+  dft-av.volume.rows-per-day-expected: 80
+  dft-av.volume.rows-per-day-tolerance-low-pct: 50
+  dft-av.volume.rows-per-day-tolerance-high-pct: 200
+  dft-av.latency.end-to-end: PT2H
+  dft-av.source-csv-headers:
+    - "Model Code"
+    - "Model Name"
+    - "Manufacturer"
+    - "ASDE"
+    - "Approval Date"
+    - "Certificate Reference"
+    - "Max Speed km/h"
+    - "Weather Exclusions"
+    - "Status"
+  dft-av.source-csv-sample: "[EXTERNAL] AV Data/AV_Act_Documents_Markup/DVLA-TA-REGISTER-2026_type_approval_register.csv"
+  dft-av.hero_invariants: []
+  dft-av.poison_classes_applicable:
+    - schema-drift
+    - vocab-violation
+    - duplicate-keys
+    - format-violation
+  dft-av.release_zone_consumers:
+    - release_licensing_cross_check

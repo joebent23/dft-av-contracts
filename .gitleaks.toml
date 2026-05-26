@@ -1,0 +1,11 @@
+# gitleaks configuration for dft-av-contracts (public repo).
+# Extends gitleaks' default rule set; only adds allowlists for files that
+# are themselves secret-detection artefacts (hashed digests, not secrets).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for self-referential detection-tool artefacts."
+paths = [
+    '''^\.secrets\.baseline$''',
+]

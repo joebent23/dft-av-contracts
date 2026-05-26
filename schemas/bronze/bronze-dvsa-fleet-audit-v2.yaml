@@ -1,0 +1,378 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: bronze-dvsa-fleet-audit
+  name: Bronze DVSA Fleet Audit
+  version: 2.0.0
+  status: draft
+  domain: dvsa
+  tenant: dft-av
+  owner:
+    name: DVSA Operator Compliance Data Product Owner
+    email: data.governance@dvsa.gov.uk
+  description: >
+    Bronze landing of the daily DVSA fleet audit feed (one row per NUiCO
+    licence_reference giving fleet size, inspections passed in the audit
+    period, recall exposure flag and operating status). Source is the
+    DVSA Operator Compliance SQL database replicated into Fabric via
+    OneLake Database Mirroring (Lane 2 — mirroring). Underpins the an internal scenario
+    an internal scenario hero scenario gate (DQ-CONS-RECALL-01) and an internal scenario
+    recall hero, and feeds silver_fleet_audit_join, dim_party, dim_nuico
+    and the Licensing release product. Bound to internal-dt-ref in the DfT
+    service-design data-asset register.
+
+  ## Note
+  ## This is the Bronze-layer companion to the source-layer reference
+  ## contract at ../dvsa-fleet-audit-v1.yaml. The v1 contract describes
+  ## the SOURCE CSV schema before ingestion (no audit columns, no
+  ## _source_lane); this v2 supersedes it for the Bronze table contract
+  ## by adding the five mandatory Bronze audit columns per ADR-002 and
+  ## the internal ingest lane. Downstream consumers reading from
+  ## lh_av_bronze.bronze_dvsa_fleet_audit MUST bind to this v2.
+
+schema:
+  type: delta
+  location:
+    layer: bronze
+    workspace: AV-Medallion-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_dvsa_fleet_audit
+  columns:
+    - name: nuico_name
+      type: string
+      nullable: false
+      pii: PII.Party.LegalName
+      description: >
+        Registered legal name of the NUiCO (Numbered User in Charge of
+        Operations) — the licensed AV operator under the AV Act. Source
+        CSV header "NUiCO Name".
+    - name: licence_reference
+      type: string
+      nullable: false
+      format: '^NUICO-DVSA-\d{4}-\d{3}$'
+      description: >
+        DVSA-issued NUiCO operator licence reference. Primary natural
+        key across DVSA, NUiCO and Licensing release. Source CSV header
+        "Licence Reference".
+    - name: fleet_size
+      type: integer
+      nullable: false
+      description: >
+        Count of vehicles operating under this NUiCO at audit time.
+        Realistic range 3–25 per synth-rules table 5. Source CSV header
+        "Fleet Size".
+    - name: inspections_passed
+      type: integer
+      nullable: false
+      description: >
+        Count of vehicles in the fleet that passed inspection in the
+        audit period. Must be <= fleet_size. Source CSV header
+        "Inspections Passed".
+    - name: recall_exposure
+      type: string
+      nullable: false
+      enum: ["None","Yes","Yes (resolved)"]
+      description: >
+        Whether any vehicle in this fleet is in scope of an active VCA
+        recall against its model. Tri-state flag; the actual recall
+        join is performed in Silver. Source CSV header "Recall
+        Exposure".
+    - name: status
+      type: string
+      nullable: false
+      enum: ["ACTIVE","SUSPENDED","REVOKED"]
+      description: >
+        Operator licence status at audit time. Source CSV header
+        "Status".
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: Audit column — UTC timestamp when the row landed in Bronze.
+    - name: _source_file
+      type: string
+      nullable: true
+      description: Audit column — source object URI (mirroring snapshot file).
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: Audit column — UUID linking the row to the mirroring batch.
+    - name: _dq_status
+      type: string
+      nullable: false
+      enum: ["PASS","QUARANTINE","FAIL"]
+      description: Audit column — DQ Gate verdict set by internal data lineage.
+    - name: _source_lane
+      type: string
+      nullable: false
+      enum: ["shortcut","mirroring","pipeline","push","portal","eventstream","openmirroring"]
+      description: Audit column — internal ingest lane that delivered this row.
+    - name: _raw_blob_path
+      type: string
+      nullable: false
+      description: >
+        Audit column — full ABFSS / S3 / queue URI of the raw payload as
+        it landed in the source landing zone. Used for forensic replay
+        and Purview lineage back to the raw blob. Supersedes the older
+        _source_file audit column (kept for backward compatibility with
+        ADR-002 v1 consumers); new ingest notebooks MUST set both to the
+        same value when the source is file-shaped.
+    - name: _contract_version
+      type: string
+      nullable: false
+      format: '^\d+\.\d+\.\d+$'
+      description: >
+        Audit column — semver of the Bronze ODCS contract under which
+        this row was written (matches metadata.version). Lets Silver and
+        the DQ Gate detect contract drift without re-reading the YAML.
+
+semantics:
+  - term: NUiCO
+    definition: >
+      Numbered User in Charge of Operations — the licensed AV operator
+      under the AV Act. Each NUiCO holds exactly one DVSA-issued licence
+      reference.
+    relatedTerms: [operator_licence, party, licence_reference]
+  - term: Recall Exposure
+    definition: >
+      Tri-state flag indicating whether any vehicle in the operator's
+      fleet is in scope of an active VCA recall against its model.
+      "Yes (resolved)" means a recall existed but all affected vehicles
+      have been remediated.
+    relatedTerms: [VCA-REC, recall, vehicle_model]
+  - term: Fleet Audit Observation
+    definition: >
+      A DVSA-observed snapshot of a NUiCO's fleet compliance at a point
+      in time. Grain: (licence_reference, audit_date).
+    relatedTerms: [fleet_size, inspections_passed]
+
+sla:
+  freshness:
+    expected: PT26H
+    rule: DQ-FRESH-DVSA-FLEET-01
+  availability:
+    target: 99.5%
+
+quality:
+  rules:
+    - id: DQ-FORMAT-NUICO-DVSA-01
+      dimension: format
+      scope: column
+      column: licence_reference
+      expression: 'rlike("^NUICO-DVSA-\\d{4}-\\d{3}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CMPL-LIC-REF-01
+      dimension: completeness
+      scope: column
+      column: licence_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-UNIQ-LIC-REF-01
+      dimension: uniqueness
+      scope: table
+      column: licence_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CMPL-NUICO-NAME-01
+      dimension: completeness
+      scope: column
+      column: nuico_name
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CMPL-FLEET-SIZE-01
+      dimension: completeness
+      scope: column
+      column: fleet_size
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-RANGE-FLEET-SIZE-01
+      dimension: accuracy
+      scope: column
+      column: fleet_size
+      expression: "fleet_size >= 0 AND fleet_size <= 200"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CONF-RECALL-EXPOSURE-01
+      dimension: conformity
+      scope: column
+      column: recall_exposure
+      expression: "recall_exposure IN ('None','Yes','Yes (resolved)')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CONF-STATUS-01
+      dimension: conformity
+      scope: column
+      column: status
+      expression: "status IN ('ACTIVE','SUSPENDED','REVOKED')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CONS-FLEET-AUDIT-01
+      dimension: consistency
+      scope: cross-table
+      expression: "inspections_passed <= fleet_size"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CONS-RECALL-01
+      dimension: consistency
+      scope: table
+      expression: >
+        EXISTS (SELECT 1 FROM bronze_dvsa_fleet_audit
+                WHERE licence_reference = 'NUICO-DVSA-2024-005'
+                  AND recall_exposure = 'Yes (resolved)')
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-CMPL-OVERALL-01
+      dimension: completeness
+      scope: table
+      expression: "row-level completeness >= 99"
+      threshold: 99
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-FRESH-DVSA-FLEET-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: dvsa-domain-steward
+    - id: DQ-VOL-DVSA-FLEET-01
+      dimension: volume
+      scope: table
+      threshold: 100
+      blocksRelease: false
+      severity: major
+      owner: dvsa-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: expiry
+  permittedUses:
+    - statutory regulatory oversight by DVSA, CCAV and VCA
+    - cross-regulator recall exposure detection (hero scenario an internal scenario, an internal scenario)
+    - DQ gate evaluation
+    - Licensing cross-check release product
+  prohibitedUses:
+    - commercial profiling of operators
+    - PII enrichment outside the DfT consent envelope
+    - publication of identifiable operator-level fleet figures to the public stats lane
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - dvsa-domain-steward (read on bronze+silver+gold)
+    - licensing-consumer (read on release_licensing)
+  rolesProhibited:
+    - everyone-else
+    - police-consumer
+    - insurer-consumer
+    - publicstats-consumer
+
+endorsement:
+  level: Promoted
+  certifiedBy: DVSA Operator Compliance Data Product Owner
+  certifiedAt: 2026-05-20
+
+lineage:
+  upstream:
+    - kind: mirroring
+      system: DVSA Operator Compliance SQL (Lane 2 — Database Mirroring)
+      object: azure-sql://sqldb-av-dvsa-prod/dbo.fleet_audit
+  downstream:
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_silver.silver_fleet_audit_join
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.dim_party
+    - kind: workspace_item
+      workspace: AV-Medallion-{env}
+      item: lh_av_gold.dim_nuico
+    - kind: workspace_item
+      workspace: AV-Release-Licensing-{env}
+      item: release_licensing_cross_check
+
+history:
+  - version: 1.0.0
+    date: 2026-05-19
+    change: Initial source-schema contract (../dvsa-fleet-audit-v1.yaml) derived from DVSA-FLEET-AUDIT-2025-001_fleet_data.csv sample.
+    author: internal data lineage
+    breaking: false
+    approvers:
+      - DVSA Operator Compliance Data Product Owner
+      - Licensing release Data Product Owner
+  - version: 2.0.0
+    date: 2026-05-20
+    change: >
+      Bronze-layer companion contract — moved to contracts/bronze/,
+      added the five mandatory Bronze audit columns (_ingested_at_utc,
+      _source_file, _correlation_id, _dq_status, _source_lane) per
+      ADR-002 and the internal ingest lane, switched
+      _dq_status enum to PASS|QUARANTINE|FAIL, tightened fleet_size
+      range per synth-rules table 5, added DQ-CONS-RECALL-01 hero
+      invariant. Supersedes ../dvsa-fleet-audit-v1.yaml for Bronze
+      reads.
+    author: internal data engineering
+    breaking: true
+    approvers:
+      - DVSA Operator Compliance Data Product Owner
+      - Licensing release Data Product Owner
+
+customProperties:
+  dft-av.owner-agency: DVSA
+  dft-av.sensitivity: OFFICIAL-SENSITIVE
+  dft-av.dt-reference: internal-dt-ref
+  dft-av.hero-scenarios:
+    - internal-scenario-1
+    - internal-scenario-2
+  dft-av.pii-present: true
+  dft-av.zone-of-trust: internal
+  dft-av.volume.rows-per-day-expected: 60
+  dft-av.volume.rows-per-day-tolerance-low-pct: 50
+  dft-av.volume.rows-per-day-tolerance-high-pct: 200
+  dft-av.latency.end-to-end: PT4H
+  dft-av.source-csv-headers:
+    - "NUiCO Name"
+    - "Licence Reference"
+    - "Fleet Size"
+    - "Inspections Passed"
+    - "Recall Exposure"
+    - "Status"
+  dft-av.source-csv-sample: "[EXTERNAL] AV Data/AV_Act_Documents_Markup/DVSA-FLEET-AUDIT-2025-001_fleet_data.csv"
+  dft-av.hero_invariants:
+    - "licence_reference = 'NUICO-DVSA-2024-005' AND recall_exposure = 'Yes (resolved)' MUST appear exactly once (an internal operator — an internal scenario)"
+    - "inspections_passed <= fleet_size MUST hold for every row"
+  dft-av.poison_classes_applicable:
+    - schema-drift
+    - vocab-violation
+    - duplicate-keys
+    - range-violation
+    - hero-mutation
+    - reference-integrity
+  dft-av.release_zone_consumers:
+    - release_licensing_cross_check
+  dft-av.supersedes: "../dvsa-fleet-audit-v1.yaml"

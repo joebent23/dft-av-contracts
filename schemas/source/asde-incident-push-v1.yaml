@@ -1,0 +1,341 @@
+apiVersion: opendatacontractstandard.org/v3
+kind: DataContract
+
+metadata:
+  id: asde-incident-push
+  name: ASDE Incident Push
+  version: 1.0.0
+  status: active
+  domain: asde
+  tenant: dft-av
+  owner:
+    name: ASDE Partner Incident Data Product Owner
+    email: data.governance@asde.example.gov.uk
+  description: >
+    Partner-initiated incident notification pushed by ASDE-class operators into
+    the DfT AV intake via the Lane 4 APIM push pattern (ADR-003). Each row is
+    one incident as observed and submitted by the operator. The Function App
+    behind APIM validates this contract synchronously and rejects malformed
+    submissions with HTTP 400 (RFC 7807). Accepted submissions land in two
+    places: (a) a raw JSON blob in container `ingest-lane4-asde` on the
+    platform Storage account (Bronze raw archive), and (b) a CloudEvent v1.0
+    published to the Event Grid Custom Topic `dft-av-egt-ingest-{env}-swc` for
+    downstream consumers. internal data lineage materialises the Bronze Delta
+    table `bronze_asde_incident_push` from the Event Grid stream.
+
+schema:
+  type: json
+  location:
+    layer: bronze
+    workspace: AV-Ingest-{env}
+    lakehouse: lh_av_bronze
+    table: bronze_asde_incident_push
+  columns:
+    - name: asde_reference
+      type: string
+      nullable: false
+      format: '^ASDE-INC-\d{4}-\d{6}$'
+      description: >
+        Operator-issued incident reference. Globally unique per operator.
+        Used as the partner-side natural key for the incident. Source JSON
+        field `asdeReference`.
+    - name: incident_at_utc
+      type: timestamp
+      nullable: false
+      description: >
+        ISO-8601 UTC instant the incident occurred (NOT submission time).
+        Source JSON field `incidentAtUtc`. Must be ≤ current UTC and
+        ≥ 1970-01-01.
+    - name: vehicle_vin
+      type: string
+      nullable: false
+      pii: PII.Vehicle.VIN
+      format: '^[A-HJ-NPR-Z0-9]{17}$'
+      description: >
+        17-character VIN of the vehicle involved (ISO 3779). Excludes I, O, Q.
+        Source JSON field `vehicleVin`.
+    - name: operator_licence_reference
+      type: string
+      nullable: false
+      format: '^NUICO-DVSA-\d{4}-\d{3}$'
+      description: >
+        Operator's NUiCO licence reference (joins to DVSA fleet audit).
+        Source JSON field `operatorLicenceReference`.
+    - name: incident_class
+      type: string
+      nullable: false
+      enum: ["collision", "near-miss", "out-of-odd", "cyber", "system-fault"]
+      description: >
+        Coarse category for routing + DQ. Source JSON field `incidentClass`.
+    - name: severity
+      type: string
+      nullable: false
+      enum: ["tier-1", "tier-2", "tier-3"]
+      description: >
+        Severity tier per ASDE Operator Code of Practice. Tier-1 = injury or
+        fatality; Tier-2 = damage only; Tier-3 = no damage, behavioural
+        anomaly. Source JSON field `severity`.
+    - name: location_lat
+      type: decimal(9,6)
+      nullable: false
+      description: >
+        Incident latitude in WGS84. Range -90..90. Source JSON field
+        `location.lat`.
+    - name: location_lon
+      type: decimal(9,6)
+      nullable: false
+      description: >
+        Incident longitude in WGS84. Range -180..180. Source JSON field
+        `location.lon`.
+    - name: description
+      type: string
+      nullable: true
+      description: >
+        Operator-supplied free-text incident description, ≤ 2000 chars. Not
+        used for routing or DQ. Source JSON field `description`.
+    - name: witnesses
+      type: array<string>
+      nullable: true
+      description: >
+        Optional array of witness reference strings (NOT names — references
+        already pseudonymised by operator). Source JSON field `witnesses`.
+    - name: _ingested_at_utc
+      type: timestamp
+      nullable: false
+      description: >
+        Audit column added by the Function — UTC instant the row landed in
+        Bronze raw.
+    - name: _source_submitter_org
+      type: string
+      nullable: false
+      description: >
+        Audit column added by the Function from the `X-Submitter-Org` header
+        set by APIM via product/subscription mapping. `unknown` if header
+        absent.
+    - name: _correlation_id
+      type: string
+      nullable: false
+      description: >
+        Audit column. Echo of `X-Correlation-Id` request header if present,
+        else a Function-generated UUID v4. Returned to the caller in the
+        HTTP 202 body and `X-Correlation-Id` response header. Propagated
+        into the CloudEvent as the `correlationid` extension.
+    - name: _ingest_id
+      type: string
+      nullable: false
+      description: >
+        Audit column. Function-generated UUID v4 used for the blob filename
+        (safe by construction; partner-supplied correlation_id is never put
+        on disk in the path).
+
+semantics:
+  - term: ASDE Reference
+    definition: >
+      Operator-issued unique incident identifier emitted as part of the ASDE
+      open-data push schedule. Format `ASDE-INC-YYYY-NNNNNN`. One reference
+      identifies one incident across all downstream surfaces.
+    relatedTerms: [incident, correlation_id]
+  - term: NUiCO Licence Reference
+    definition: >
+      Numbered User in Charge of Operations — the DVSA-issued operator
+      licence reference. The same value appears in `dvsa-fleet-audit-v1.yaml`;
+      it is the join key between an operator's fleet audit row and any
+      incident attributed to a vehicle in that fleet.
+    relatedTerms: [operator_licence, party]
+  - term: Severity Tier
+    definition: >
+      ASDE Operator Code of Practice 3-tier scale. Tier-1 = injury or
+      fatality, blocks release. Tier-2 = property damage only. Tier-3 =
+      behavioural anomaly, no damage. Tier-1 incidents are routed to the
+      Activator alert lane .
+    relatedTerms: [incident_class, R155]
+
+sla:
+  freshness:
+    expected: PT5M
+    rule: DQ-FRESH-ASDE-PUSH-01
+  availability:
+    target: 99.0%
+  responseTime:
+    p95: PT500MS
+
+quality:
+  rules:
+    - id: DQ-FORMAT-ASDE-REF-01
+      dimension: format
+      scope: column
+      column: asde_reference
+      expression: 'rlike("^ASDE-INC-\\d{4}-\\d{6}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-FORMAT-VIN-01
+      dimension: format
+      scope: column
+      column: vehicle_vin
+      expression: 'rlike("^[A-HJ-NPR-Z0-9]{17}$")'
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CMPL-CORE-01
+      dimension: completeness
+      scope: table
+      expression: "asde_reference IS NOT NULL AND vehicle_vin IS NOT NULL AND incident_at_utc IS NOT NULL"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONF-INCIDENT-CLASS-01
+      dimension: conformity
+      scope: column
+      column: incident_class
+      expression: "incident_class IN ('collision','near-miss','out-of-odd','cyber','system-fault')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-CONF-SEVERITY-01
+      dimension: conformity
+      scope: column
+      column: severity
+      expression: "severity IN ('tier-1','tier-2','tier-3')"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-RANGE-LAT-01
+      dimension: accuracy
+      scope: column
+      column: location_lat
+      expression: "location_lat BETWEEN -90 AND 90"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-RANGE-LON-01
+      dimension: accuracy
+      scope: column
+      column: location_lon
+      expression: "location_lon BETWEEN -180 AND 180"
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-FRESH-ASDE-PUSH-01
+      dimension: freshness
+      scope: table
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+    - id: DQ-UNIQ-ASDE-REF-01
+      dimension: uniqueness
+      scope: table
+      column: asde_reference
+      threshold: 100
+      blocksRelease: true
+      severity: critical
+      owner: asde-domain-steward
+
+termsOfUse:
+  classification: OFFICIAL-SENSITIVE
+  retention:
+    period: P7Y
+    deleteOn: expiry
+  permittedUses:
+    - statutory regulatory oversight by DVSA, CCAV and DfT
+    - cross-regulator incident correlation (an internal scenario)
+    - DQ gate evaluation
+    - Insurer release product (MIB sandbox sibling)
+  prohibitedUses:
+    - commercial profiling of operators or vehicles
+    - PII enrichment outside DfT consent envelope
+    - publication of identifiable incident-level rows to public stats lane
+
+access:
+  rolesPermitted:
+    - data-engineer (read+write on bronze)
+    - data-analyst (read on silver+gold)
+    - asde-domain-steward (read on bronze+silver+gold)
+    - insurer-consumer (read on release_insurers)
+    - police-consumer (read on release_police)
+  rolesProhibited:
+    - everyone-else
+    - publicstats-consumer
+    - licensing-consumer
+
+endorsement:
+  level: Certified
+  certifiedBy: ASDE Data Product Owner
+  certifiedAt: 2026-05-20
+
+lineage:
+  upstream:
+    - kind: external
+      system: ASDE Partner Push (APIM Consumption)
+      object: https://dft-av-apim-ingest-{env}-swc.azure-api.net/incidents
+  downstream:
+    - kind: storage
+      system: Azure Data Lake Storage Gen2 (platform SA, raw archive)
+      object: dftavstplatform{env}swc/ingest-lane4-asde/year=YYYY/month=MM/day=DD/<ingest_id>.json
+    - kind: eventbroker
+      system: Azure Event Grid Custom Topic
+      object: dft-av-egt-ingest-{env}-swc (CloudEvent type uk.gov.dft.av.safety.incident.reported.v1)
+    - kind: workspace_item
+      workspace: AV-Ingest-{env}
+      item: lh_av_bronze.bronze_asde_incident_push # materialised (internal data lineage)
+    - kind: workspace_item
+      workspace: AV-Realtime-{env}
+      item: eh_av_realtime # materialised (internal data lineage)
+
+history:
+  - version: 1.0.0
+    date: 2026-05-20
+    change: >
+      Initial contract for Lane 4 (APIM push) MVP. Authored alongside
+      an internal story implementation. Schema validated server-side in the
+      Function App via the JSON-Schema mirror at
+      apps/ingest_lane4_asde/schemas/asde-incident-push-v1.schema.json.
+    author: internal data lineage
+    breaking: false
+    approvers:
+      - ASDE Domain Steward
+      - DfT-AV Data Governance WG
+
+customProperties:
+  dft-av.owner-agency: ASDE
+  dft-av.dt-reference: DT-ASDE-INCIDENT
+  dft-av.hero-scenarios:
+    - internal-scenario-1
+  dft-av.pii-present: true
+  dft-av.zone-of-trust: internal
+  dft-av.lane: 4
+  dft-av.ingest-pattern: push-apim
+  dft-av.volume.rows-per-day-expected: 200
+  dft-av.volume.rows-per-day-tolerance-low-pct: 50
+  dft-av.volume.rows-per-day-tolerance-high-pct: 300
+  dft-av.latency.end-to-end: PT5M
+  dft-av.cloudevent.type: uk.gov.dft.av.safety.incident.reported.v1
+  dft-av.cloudevent.source-uri: urn:dft-av:ingest:lane4
+  dft-av.cloudevent.subject-pattern: /dft/av/{submitter_org}/safety/{correlation_id}
+  dft-av.bronze-raw-archive.container: ingest-lane4-asde
+  dft-av.bronze-raw-archive.path-pattern: year=YYYY/month=MM/day=DD/<ingest_id>.json
+  dft-av.eventgrid.input-schema: CloudEventSchemaV1_0
+  dft-av.eventgrid.subscriptions-sprint-2:
+    - sub-lane4-queue (StorageQueue → lane4-incidents)
+    - sub-webhook-demo (optional, WebHook → webhook.site)
+  dft-av.eventgrid.subscriptions-deferred-sprint-3:
+    - sub-fabric-eventstream (CustomEndpoint → Eventstream in AV-Ingest-{env})
+  dft-av.source-json-fields:
+    - asdeReference
+    - incidentAtUtc
+    - vehicleVin
+    - operatorLicenceReference
+    - incidentClass
+    - severity
+    - location.lat
+    - location.lon
+    - description (optional)
+    - witnesses (optional)

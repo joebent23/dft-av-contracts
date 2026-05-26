@@ -1,0 +1,7 @@
+# Global owner — every PR requires review from this account.
+#
+# KNOWN RISK: single-owner repo. A follow-up ADR (planned for repo-split P3)
+# will add a second code owner so PRs are not blocked when the primary
+# owner is unavailable, and so no single account can self-merge a
+# breaking schema change.
+* @joebent23

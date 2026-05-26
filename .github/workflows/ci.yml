@@ -1,0 +1,152 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # TODO: replace @v4 with a commit SHA pin once first release is cut
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        # TODO: replace @v5 with a commit SHA pin once first release is cut
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install codegen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r tools/codegen/requirements.txt
+
+      - name: Validate MANIFEST integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/codegen/validate_manifest.py
+
+  dry-run-codegen:
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    steps:
+      - name: Checkout
+        # TODO: replace @v4 with a commit SHA pin once first release is cut
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        # TODO: replace @v5 with a commit SHA pin once first release is cut
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install codegen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r tools/codegen/requirements.txt
+
+      - name: Generate Pydantic stubs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/codegen/generate_pydantic.py
+
+      - name: Smoke install + import
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -e .
+          python -c "import dft_av_contracts; print('import OK, version=', dft_av_contracts.__version__)"
+
+  breaking-change-check:
+    # Only run on pull requests; needs base ref available for diff.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for diff)
+        # TODO: replace @v4 with a commit SHA pin once first release is cut
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.11
+        # TODO: replace @v5 with a commit SHA pin once first release is cut
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install codegen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r tools/codegen/requirements.txt
+
+      - name: Fetch base ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=50 origin "${GITHUB_BASE_REF}"
+
+      - name: Run contract diff (breaking-change linter)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/contract-diff.py \
+            --base "origin/${GITHUB_BASE_REF}" \
+            --head HEAD \
+            --fail-on-breaking
+
+  hygiene-scan:
+    name: Public-repo hygiene scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for gitleaks)
+        # TODO: replace @v4 with a commit SHA pin once first release is cut
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.11
+        # TODO: replace @v5 with a commit SHA pin once first release is cut
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run gitleaks
+        # TODO SHA-pin gitleaks-action pre-public (no pinned SHA available yet).
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .gitleaks.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install detect-secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install detect-secrets==1.5.0
+
+      - name: detect-secrets diff against baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail if any tracked file introduces a new finding not in the baseline.
+          git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline

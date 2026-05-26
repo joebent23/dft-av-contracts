@@ -1,0 +1,186 @@
+name: release
+
+# Release pipeline for dft-av-contracts.
+# Triggered by pushing a semver tag (e.g. v1.2.3). Builds a versioned artefact
+# (schemas + generated Pydantic stubs) and publishes a GitHub Release.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for annotated tag)
+        # TODO: replace @v4 with a commit SHA pin once first release is cut
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.11
+        # TODO: replace @v5 with a commit SHA pin once first release is cut
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install codegen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r tools/codegen/requirements.txt
+
+      - name: Extract version from tag and patch __init__.py
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Releasing version: ${VERSION}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+          INIT_FILE="python/dft_av_contracts/__init__.py"
+          if [ ! -f "${INIT_FILE}" ]; then
+            echo "ERROR: ${INIT_FILE} not found" >&2
+            exit 1
+          fi
+          # Tolerant semver regex check — accepts any current valid placeholder version.
+          if ! grep -Eq '^__version__ = "[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.]+)?"' "${INIT_FILE}"; then
+            echo "ERROR: no valid __version__ = \"X.Y.Z\" line found in ${INIT_FILE}" >&2
+            grep -n '__version__' "${INIT_FILE}" || true
+            exit 1
+          fi
+          # Robust to whitespace and quote variations.
+          sed -i -E "s/^__version__[[:space:]]*=[[:space:]]*\"[^\"]+\"/__version__ = \"${VERSION}\"/" "${INIT_FILE}"
+          echo "Patched ${INIT_FILE}:"
+          grep -n '__version__' "${INIT_FILE}"
+          # NOTE: pyproject.toml uses dynamic = ["version"] via [tool.hatch.version],
+          # so it picks up the patched __init__.py automatically — no sed needed.
+
+      - name: Regenerate MANIFEST.yaml with release-time generator + fresh sha256
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          import yaml
+
+          version = os.environ["VERSION"]
+          schemas = Path("schemas")
+          manifest_path = schemas / "MANIFEST.yaml"
+          existing = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+          entries = existing.get("contracts") or []
+          by_rel = {e.get("relative_path") or e.get("path"): e for e in entries if isinstance(e, dict)}
+
+          def sha256_of(p: Path) -> str:
+              h = hashlib.sha256()
+              with p.open("rb") as fh:
+                  for chunk in iter(lambda: fh.read(65536), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          new_entries = []
+          for sub in ("bronze", "source"):
+              root = schemas / sub
+              if not root.is_dir():
+                  continue
+              for p in sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml"))):
+                  if p.name.lower() == "readme.yaml":
+                      continue
+                  rel = p.relative_to(schemas).as_posix()
+                  prev = by_rel.get(rel, {})
+                  doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                  meta = doc.get("metadata") or {}
+                  new_entries.append({
+                      "relative_path": rel,
+                      "name": prev.get("name") or meta.get("name") or p.stem,
+                      "version": str(meta.get("version") or prev.get("version") or "0.0.0"),
+                      "kind": sub,
+                      "supersedes": prev.get("supersedes"),
+                      "sha256": sha256_of(p),
+                  })
+
+          out = {
+              "manifestVersion": 1,
+              "generator": f".github/workflows/release.yml@v{version}",
+              "contracts": new_entries,
+          }
+          manifest_path.write_text(yaml.safe_dump(out, sort_keys=False), encoding="utf-8")
+          print(f"Regenerated MANIFEST.yaml with {len(new_entries)} contracts (generator stamped at v{version}).")
+          PY
+
+      - name: Validate MANIFEST integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/codegen/validate_manifest.py
+
+      - name: Generate Pydantic stubs from contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/codegen/generate_pydantic.py
+
+      - name: Smoke import test
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -e .
+          python - <<'PY'
+          import pkgutil, dft_av_contracts
+          gen = [m.name for m in pkgutil.iter_modules(dft_av_contracts.__path__) if not m.name.startswith('_')]
+          assert len(gen) > 0, "No generated models found — codegen produced zero output"
+          print(f"Smoke OK: {len(gen)} generated modules — {gen[:5]}...")
+          print("version:", dft_av_contracts.__version__)
+          PY
+
+      - name: Build release artefact
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          STAGE="$(mktemp -d)"
+          PKG_DIR="${STAGE}/contracts-v${VERSION}"
+          mkdir -p "${PKG_DIR}"
+          cp -r schemas "${PKG_DIR}/"
+          cp -r python "${PKG_DIR}/"
+          cp LICENSE "${PKG_DIR}/"
+          cp README.md "${PKG_DIR}/"
+          cp pyproject.toml "${PKG_DIR}/"
+          ( cd "${STAGE}" && zip -r "${GITHUB_WORKSPACE}/dist/contracts-v${VERSION}.zip" "contracts-v${VERSION}" )
+          ls -la dist/
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        # TODO: replace @v2 with a commit SHA pin once first release is cut
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/contracts-v${{ steps.version.outputs.version }}.zip
+            dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

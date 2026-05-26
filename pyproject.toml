@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dft-av-contracts"
+dynamic = ["version"]
+description = "Generated Pydantic models for DfT-AV data contracts (single source of truth)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "DfT-AV Platform Team" }]
+keywords = ["dft-av", "data-contracts", "odcs", "pydantic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/joebent23/dft-av-contracts"
+Issues = "https://github.com/joebent23/dft-av-contracts/issues"
+
+[tool.hatch.version]
+path = "python/dft_av_contracts/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/dft_av_contracts"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "python/dft_av_contracts",
+    "schemas",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
