@@ -369,8 +369,20 @@ def build_entities_for_file(path: Path) -> list[EntitySpec]:
         if not fields:
             continue
 
-        class_name = f"{to_pascal(kind)}{to_pascal(entity_name)}Row"
-        module_name = f"{to_snake(kind)}_{to_snake(entity_name)}"
+        kind_pascal = to_pascal(kind)
+        entity_pascal = to_pascal(entity_name)
+        # Avoid double-prefixing when the entity name already begins with the layer kind
+        # (e.g. kind="bronze" + entity_name="bronze_asde_incident_push" → "BronzeAsdeIncidentPushRow")
+        if entity_pascal.lower().startswith(kind_pascal.lower()):
+            class_name = f"{entity_pascal}Row"
+        else:
+            class_name = f"{kind_pascal}{entity_pascal}Row"
+        kind_snake = to_snake(kind)
+        entity_snake = to_snake(entity_name)
+        if entity_snake.startswith(f"{kind_snake}_"):
+            module_name = entity_snake
+        else:
+            module_name = f"{kind_snake}_{entity_snake}"
         specs.append(
             EntitySpec(
                 kind=kind,
