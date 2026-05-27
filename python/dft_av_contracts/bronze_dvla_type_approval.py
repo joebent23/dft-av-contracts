@@ -16,7 +16,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class BronzeBronzeDvlaTypeApprovalRow(BaseModel):
+class BronzeDvlaTypeApprovalRow(BaseModel):
     """Row model for ``bronze_dvla_type_approval`` (bronze layer)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)

@@ -1,6 +1,7 @@
 """dft-av-contracts: generated Pydantic models for DfT AV data contracts."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
+
 
 
 
@@ -8,29 +9,29 @@ __version__ = "0.1.0"
 
 
 # --- BEGIN GENERATED RE-EXPORTS (do not edit) ---
-from .bronze_bronze_asde_incident_push import BronzeBronzeAsdeIncidentPushRow
-from .bronze_bronze_ccav_kpi import BronzeBronzeCcavKpiRow
-from .bronze_bronze_ccav_tx_log import BronzeBronzeCcavTxLogRow
-from .bronze_bronze_dvla_type_approval import BronzeBronzeDvlaTypeApprovalRow
-from .bronze_bronze_dvla_vehicle_registry import BronzeBronzeDvlaVehicleRegistryRow
-from .bronze_bronze_dvsa_aps_perf import BronzeBronzeDvsaApsPerfRow
-from .bronze_bronze_dvsa_fleet_audit import BronzeBronzeDvsaFleetAuditRow
-from .bronze_bronze_dvsa_permit_register import BronzeBronzeDvsaPermitRegisterRow
-from .bronze_bronze_ismr_occurrences import BronzeBronzeIsmrOccurrencesRow
+from .bronze_asde_incident_push import BronzeAsdeIncidentPushRow
+from .bronze_ccav_kpi import BronzeCcavKpiRow
+from .bronze_ccav_tx_log import BronzeCcavTxLogRow
+from .bronze_dvla_type_approval import BronzeDvlaTypeApprovalRow
+from .bronze_dvla_vehicle_registry import BronzeDvlaVehicleRegistryRow
+from .bronze_dvsa_aps_perf import BronzeDvsaApsPerfRow
+from .bronze_dvsa_fleet_audit import BronzeDvsaFleetAuditRow
+from .bronze_dvsa_permit_register import BronzeDvsaPermitRegisterRow
+from .bronze_ismr_occurrences import BronzeIsmrOccurrencesRow
 from .source_bronze_asde_incident_push import SourceBronzeAsdeIncidentPushRow
 from .source_bronze_dvsa_fleet_audit import SourceBronzeDvsaFleetAuditRow
 
 __all__ = [
     "__version__",
-    "BronzeBronzeAsdeIncidentPushRow",
-    "BronzeBronzeCcavKpiRow",
-    "BronzeBronzeCcavTxLogRow",
-    "BronzeBronzeDvlaTypeApprovalRow",
-    "BronzeBronzeDvlaVehicleRegistryRow",
-    "BronzeBronzeDvsaApsPerfRow",
-    "BronzeBronzeDvsaFleetAuditRow",
-    "BronzeBronzeDvsaPermitRegisterRow",
-    "BronzeBronzeIsmrOccurrencesRow",
+    "BronzeAsdeIncidentPushRow",
+    "BronzeCcavKpiRow",
+    "BronzeCcavTxLogRow",
+    "BronzeDvlaTypeApprovalRow",
+    "BronzeDvlaVehicleRegistryRow",
+    "BronzeDvsaApsPerfRow",
+    "BronzeDvsaFleetAuditRow",
+    "BronzeDvsaPermitRegisterRow",
+    "BronzeIsmrOccurrencesRow",
     "SourceBronzeAsdeIncidentPushRow",
     "SourceBronzeDvsaFleetAuditRow",
 ]
