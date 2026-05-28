@@ -625,6 +625,31 @@ def render_json_schemas(routed_entities: list[EntitySpec]) -> None:
         )
 
 
+def vendor_apim_schemas(routed_entities: list[EntitySpec], out_dir: Path) -> None:
+    """Copy JSON schemas wrapped in APIM swagger-definitions format.
+
+    Each file is placed under ``<out_dir>/schemas/`` and referenced by the
+    per-op Bicep modules via ``loadTextContent``.
+    """
+    if not routed_entities:
+        return
+    schemas_dir = out_dir / "schemas"
+    schemas_dir.mkdir(parents=True, exist_ok=True)
+    for e in routed_entities:
+        r = e.routing  # type: ignore[assignment]
+        src = JSON_SCHEMAS_DIR / f"{r.doctype_slug}.schema.json"
+        raw = json.loads(src.read_text(encoding="utf-8"))
+        # Strip meta-keys that APIM does not need; keep the object body.
+        for key in ("$id", "$schema", "x-dft-av-contract"):
+            raw.pop(key, None)
+        wrapped = {"definitions": {e.class_name: raw}}
+        out = schemas_dir / f"{r.doctype_slug}.apim-schema.json"
+        out.write_text(
+            json.dumps(wrapped, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
 _BICEP_HEADER = (
     "// Auto-generated from {source_relpath}. DO NOT EDIT BY HAND.\n"
     "// Doctype slug:    {slug}\n"
@@ -672,6 +697,15 @@ resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' existing 
   name: '${{apimName}}/${{apiName}}'
 }}
 
+resource schema 'Microsoft.ApiManagement/service/apis/schemas@2023-05-01-preview' = {{
+  parent: api
+  name: '{r.doctype_slug}'
+  properties: {{
+    contentType: 'application/vnd.ms-azure-apim.swagger.definitions+json'
+    document: json(loadTextContent('schemas/{r.doctype_slug}.apim-schema.json'))
+  }}
+}}
+
 resource op 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {{
   parent: api
   name: '{r.doctype_slug}'
@@ -698,6 +732,15 @@ resource op 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview'
       {{ statusCode: 401, description: 'Missing or invalid persona subscription key' }}
       {{ statusCode: 413, description: 'Payload exceeds documented size cap' }}
     ]
+  }}
+}}
+
+resource opPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {{
+  parent: op
+  name: 'policy'
+  properties: {{
+    format: 'xml'
+    value: '<policies>\\n  <inbound>\\n    <base />\\n    <validate-content unspecified-content-type-action="prevent" max-size="1048576" size-exceeded-action="prevent" errors-variable-name="requestBodyValidation">\\n      <content type="application/json" validate-as="json" action="prevent" schema-id="{r.doctype_slug}" schema-ref="#/definitions/{e.class_name}" />\\n    </validate-content>\\n  </inbound>\\n  <backend><base /></backend>\\n  <outbound><base /></outbound>\\n  <on-error><base /></on-error>\\n</policies>'
   }}
 }}
 
@@ -782,6 +825,7 @@ def main(argv: list[str] | None = None) -> int:
     routed = render_routes_module(all_entities)
     render_json_schemas(routed)
     render_apim_ops_bicep(routed, args.apim_ops_out)
+    vendor_apim_schemas(routed, args.apim_ops_out)
 
     apim_target = args.apim_ops_out
     try:
