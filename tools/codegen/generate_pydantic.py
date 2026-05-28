@@ -693,10 +693,26 @@ param apimName string
 @description('Name of the parent ingest API inside APIM (defaults to apim-ingest).')
 param apiName string = 'apim-ingest'
 
-resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' existing = {{
-  name: '${{apimName}}/${{apiName}}'
+resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' existing = {{
+  name: apimName
 }}
 
+resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' existing = {{
+  parent: apim
+  name: apiName
+}}
+
+// Global schema \u2014 referenced by validate-content policy (service-level, not API-scoped).
+resource globalSchema 'Microsoft.ApiManagement/service/schemas@2023-05-01-preview' = {{
+  parent: apim
+  name: '{r.doctype_slug}'
+  properties: {{
+    schemaType: 'json'
+    document: json(loadTextContent('schemas/{r.doctype_slug}.apim-schema.json'))
+  }}
+}}
+
+// API-scoped schema \u2014 used by operation request representation binding (developer portal docs).
 resource schema 'Microsoft.ApiManagement/service/apis/schemas@2023-05-01-preview' = {{
   parent: api
   name: '{r.doctype_slug}'
@@ -709,6 +725,7 @@ resource schema 'Microsoft.ApiManagement/service/apis/schemas@2023-05-01-preview
 resource op 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {{
   parent: api
   name: '{r.doctype_slug}'
+  dependsOn: [schema]
   properties: {{
     displayName: '{display_name}'
     method: '{r.http_method}'
@@ -738,6 +755,7 @@ resource op 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview'
 resource opPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {{
   parent: op
   name: 'policy'
+  dependsOn: [globalSchema]
   properties: {{
     format: 'xml'
     value: '<policies>\\n  <inbound>\\n    <base />\\n    <validate-content unspecified-content-type-action="prevent" max-size="1048576" size-exceeded-action="prevent" errors-variable-name="requestBodyValidation">\\n      <content type="application/json" validate-as="json" action="prevent" schema-id="{r.doctype_slug}" schema-ref="#/definitions/{e.class_name}" />\\n    </validate-content>\\n  </inbound>\\n  <backend><base /></backend>\\n  <outbound><base /></outbound>\\n  <on-error><base /></on-error>\\n</policies>'
