@@ -1,0 +1,100 @@
+{
+  "$id": "https://contracts.dft-av.example.gov.uk/json/nuico-ccav-kpi.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Row model for ``bronze_ccav_kpi`` (bronze layer).",
+  "properties": {
+    "_contract_version": {
+      "description": "Audit column \u2014 semver of the Bronze ODCS contract under which this row was written (matches metadata.version). Lets Silver and the DQ Gate detect contract drift without re-reading the YAML.\n",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "_correlation_id": {
+      "description": "Audit column \u2014 UUID linking the row to the ingest batch / API call.",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "_dq_status": {
+      "description": "Audit column \u2014 DQ Gate verdict set by internal data lineage.",
+      "title": "Dq Status",
+      "type": "string"
+    },
+    "_ingested_at_utc": {
+      "description": "Audit column \u2014 UTC timestamp when the row landed in Bronze.",
+      "format": "date-time",
+      "title": "Ingested At Utc",
+      "type": "string"
+    },
+    "_raw_blob_path": {
+      "description": "Audit column \u2014 full ABFSS / S3 / queue URI of the raw payload as it landed in the source landing zone. Used for forensic replay and Purview lineage back to the raw blob. Supersedes the older _source_file audit column (kept for backward compatibility with ADR-002 v1 consumers); new ingest notebooks MUST set both to the same value when the source is file-shaped.\n",
+      "title": "Raw Blob Path",
+      "type": "string"
+    },
+    "_source_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Audit column \u2014 source CSV filename or URI.",
+      "title": "Source File"
+    },
+    "_source_lane": {
+      "description": "Audit column \u2014 internal ingest lane that delivered this row.",
+      "title": "Source Lane",
+      "type": "string"
+    },
+    "key_dt_references": {
+      "description": "Comma-separated list of Data Tracker DT references the analyst associates with this process (e.g. \"internal-dt-ref\" for Registration). Preserved verbatim from source. Source CSV header \"Key DT References\".\n",
+      "title": "Key Dt References",
+      "type": "string"
+    },
+    "pct_of_total": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Share of the period's total transactions attributable to this process, rounded to one decimal place. All rows in a period MUST sum to 100.0 \u00b1 0.5. Source CSV header \"Pct of Total\".\n",
+      "title": "Pct Of Total"
+    },
+    "process": {
+      "description": "AV Act regulatory process the KPI summarises. Closed vocabulary of six values per analyst synth-rules (table 1). Source CSV header \"Process\".\n",
+      "title": "Process",
+      "type": "string"
+    },
+    "transaction_count": {
+      "description": "Count of regulatory transactions of this process type in the reporting period. Realistic range 1\u2013500 per process per quarter. Source CSV header \"Transaction Count\".\n",
+      "title": "Transaction Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "process",
+    "transaction_count",
+    "pct_of_total",
+    "key_dt_references",
+    "_ingested_at_utc",
+    "_correlation_id",
+    "_dq_status",
+    "_source_lane",
+    "_raw_blob_path",
+    "_contract_version"
+  ],
+  "title": "BronzeCcavKpiRow",
+  "type": "object",
+  "x-dft-av-contract": {
+    "contract_id": "bronze-ccav-kpi",
+    "contract_version": "1.0.0",
+    "doctype_slug": "nuico-ccav-kpi",
+    "source_relpath": "schemas/bronze/bronze-ccav-kpi-v1.yaml"
+  }
+}

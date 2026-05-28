@@ -1,0 +1,345 @@
+{
+  "$id": "https://contracts.dft-av.example.gov.uk/json/si-inv.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Row model for ``bronze_asde_incident_push`` (bronze layer).",
+  "properties": {
+    "_contract_version": {
+      "description": "Audit column \u2014 semver of the Bronze ODCS contract under which this row was written (matches metadata.version). Lets Silver and the DQ Gate detect contract drift without re-reading the YAML.\n",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "_correlation_id": {
+      "description": "Audit column \u2014 UUID linking the row to the APIM call.",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "_dq_status": {
+      "description": "Audit column \u2014 DQ Gate verdict set by internal data lineage.",
+      "title": "Dq Status",
+      "type": "string"
+    },
+    "_ingested_at_utc": {
+      "description": "Audit column \u2014 UTC timestamp when the row landed in Bronze.",
+      "format": "date-time",
+      "title": "Ingested At Utc",
+      "type": "string"
+    },
+    "_raw_blob_path": {
+      "description": "Audit column \u2014 full ABFSS / S3 / queue URI of the raw payload as it landed in the source landing zone. Used for forensic replay and Purview lineage back to the raw blob. Supersedes the older _source_file audit column (kept for backward compatibility with ADR-002 v1 consumers); new ingest notebooks MUST set both to the same value when the source is file-shaped.\n",
+      "title": "Raw Blob Path",
+      "type": "string"
+    },
+    "_source_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Audit column \u2014 APIM push URI / Event Grid event id.",
+      "title": "Source File"
+    },
+    "_source_lane": {
+      "description": "Audit column \u2014 internal ingest lane (always \"push\" here).",
+      "title": "Source Lane",
+      "type": "string"
+    },
+    "active_recall_at_incident": {
+      "description": "Whether a VCA recall was active against the vehicle's model at the incident date. Source JSON key \"liability_indicators.active_recall_at_incident\".\n",
+      "title": "Active Recall At Incident",
+      "type": "boolean"
+    },
+    "ads_state": {
+      "description": "ADS engagement state at incident. Source JSON key \"technical_data.ads_state\".\n",
+      "title": "Ads State",
+      "type": "string"
+    },
+    "asde_name": {
+      "description": "Legal name of the ASDE. Source JSON key \"entities.asde.name\".\n",
+      "title": "Asde Name",
+      "type": "string"
+    },
+    "asde_reference": {
+      "description": "ASDE reference. Source JSON key \"entities.asde.reference\".\n",
+      "title": "Asde Reference",
+      "type": "string"
+    },
+    "contributing_liability": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Free-text statement of any contributing liability. Source JSON key \"liability_indicators.contributing_liability\".\n",
+      "title": "Contributing Liability"
+    },
+    "cyber_ads_telemetry_anomaly": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional free-text description of any related ADS telemetry anomaly. Source JSON key \"cyber_incident.ads_telemetry_anomaly\".\n",
+      "title": "Cyber Ads Telemetry Anomaly"
+    },
+    "cyber_incident_category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional cyber-incident category (e.g. UN_R155_CSMS_VULNERABILITY). Source JSON key \"cyber_incident.category\".\n",
+      "title": "Cyber Incident Category"
+    },
+    "cyber_incident_reference": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional UN R155 cyber incident reference (e.g. R155-INC-NVR-2025-001). Present only when the package includes a cyber_incident block. Source JSON key \"cyber_incident.reference\".\n",
+      "title": "Cyber Incident Reference"
+    },
+    "cyber_incident_vector": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional free-text description of the attack vector. Source JSON key \"cyber_incident.vector\".\n",
+      "title": "Cyber Incident Vector"
+    },
+    "document_type": {
+      "description": "Fixed payload discriminator. Source JSON key \"document_type\".\n",
+      "title": "Document Type",
+      "type": "string"
+    },
+    "dt_references": {
+      "description": "Array of Data Tracker DT references the incident touches. Source JSON key \"dt_references\".\n",
+      "title": "Dt References",
+      "type": "string"
+    },
+    "emergency_braking_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Emergency braking application percentage (0.0\u2013100.0). Source JSON key \"technical_data.emergency_braking_pct\".\n",
+      "title": "Emergency Braking Pct"
+    },
+    "failure_mode": {
+      "description": "ADS failure-mode tag (e.g. FAIL_PLANNER, FAIL_CYBER_AUTH, FAIL_PERCEPTION, FAIL_V2X). Source JSON key \"technical_data.failure_mode\".\n",
+      "title": "Failure Mode",
+      "type": "string"
+    },
+    "generated_date": {
+      "description": "ISO date the package was generated by the ASDE partner. Source JSON key \"generated_date\".\n",
+      "format": "date",
+      "title": "Generated Date",
+      "type": "string"
+    },
+    "incident_date": {
+      "description": "ISO date the incident occurred. Source JSON key \"incident_date\".\n",
+      "format": "date",
+      "title": "Incident Date",
+      "type": "string"
+    },
+    "incident_location": {
+      "description": "Free-text human-readable location of the incident. Source JSON key \"incident_location\".\n",
+      "title": "Incident Location",
+      "type": "string"
+    },
+    "insurance_notification_required": {
+      "description": "Whether the package triggers a regulatory insurance notification. Source JSON key \"liability_indicators.insurance_notification_required\".\n",
+      "title": "Insurance Notification Required",
+      "type": "boolean"
+    },
+    "investigation_reference": {
+      "description": "Statutory Inspector investigation reference (PK). The hero SI-INV-2025-0001 MUST round-trip verbatim. Source JSON key \"investigation_reference\".\n",
+      "title": "Investigation Reference",
+      "type": "string"
+    },
+    "nuico_name": {
+      "description": "Legal name of the NUiCO. Source JSON key \"entities.nuico.name\".\n",
+      "title": "Nuico Name",
+      "type": "string"
+    },
+    "nuico_reference": {
+      "description": "FK to bronze_dvsa_fleet_audit.licence_reference. Source JSON key \"entities.nuico.reference\".\n",
+      "title": "Nuico Reference",
+      "type": "string"
+    },
+    "odd_road_type_compliance": {
+      "description": "Road-type ODD compliance verdict. Source JSON key \"odd_assessment.road_type_compliance\".\n",
+      "title": "Odd Road Type Compliance",
+      "type": "string"
+    },
+    "odd_speed_compliance": {
+      "description": "Speed-band ODD compliance verdict. Source JSON key \"odd_assessment.speed_compliance\".\n",
+      "title": "Odd Speed Compliance",
+      "type": "string"
+    },
+    "odd_time_of_day_compliance": {
+      "description": "Time-of-day ODD compliance verdict. Source JSON key \"odd_assessment.time_of_day_compliance\".\n",
+      "title": "Odd Time Of Day Compliance",
+      "type": "string"
+    },
+    "odd_weather_compliance": {
+      "description": "Weather ODD compliance verdict. Source JSON key \"odd_assessment.weather_compliance\".\n",
+      "title": "Odd Weather Compliance",
+      "type": "string"
+    },
+    "overall_odd_status": {
+      "description": "Overall ODD verdict. Source JSON key \"odd_assessment.overall_odd_status\".\n",
+      "title": "Overall Odd Status",
+      "type": "string"
+    },
+    "primary_liability": {
+      "description": "Free-text statement of primary liability attribution. Source JSON key \"liability_indicators.primary_liability\".\n",
+      "title": "Primary Liability",
+      "type": "string"
+    },
+    "raw_payload": {
+      "description": "Verbatim JSON payload as received over APIM, preserved for replay and forensic audit. Silver re-parses if the schema evolves.\n",
+      "title": "Raw Payload",
+      "type": "string"
+    },
+    "recall_reference": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional VCA recall reference if active_recall_at_incident is true. The hero VCA-REC-2025-NVR-001 MUST appear at least once (SI-INV-2025-0001). Source JSON key \"liability_indicators.recall_reference\".\n",
+      "title": "Recall Reference"
+    },
+    "schema_version": {
+      "description": "ASDE-partner package schema version (currently \"1.0\"). Source JSON key \"schema_version\".\n",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "speed_kmh": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Vehicle speed at incident in km/h. Source JSON key \"technical_data.speed_kmh\".\n",
+      "title": "Speed Kmh"
+    },
+    "status": {
+      "description": "Package status. Source JSON key \"status\".\n",
+      "title": "Status",
+      "type": "string"
+    },
+    "vehicle_model_code": {
+      "description": "FK to bronze_dvla_type_approval.model_code. Source JSON key \"vehicle.model_code\".\n",
+      "title": "Vehicle Model Code",
+      "type": "string"
+    },
+    "vehicle_model_name": {
+      "description": "Human-readable model name. Source JSON key \"vehicle.model_name\".\n",
+      "title": "Vehicle Model Name",
+      "type": "string"
+    },
+    "vehicle_registration_mark": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "UK registration mark of the vehicle. Source JSON key \"vehicle.registration_mark\".\n",
+      "title": "Vehicle Registration Mark"
+    },
+    "vehicle_vin": {
+      "description": "Vehicle Identification Number \u2014 either a 17-char ISO-3779 VIN for sister packages or the hero UK plate \"EXAMPLEPLATE01\" / \"an internal scenario\" for SI-INV-2025-0001. Source JSON key \"vehicle.vin\".\n",
+      "title": "Vehicle Vin",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "document_type",
+    "investigation_reference",
+    "incident_date",
+    "incident_location",
+    "dt_references",
+    "vehicle_vin",
+    "vehicle_model_code",
+    "vehicle_model_name",
+    "asde_reference",
+    "asde_name",
+    "nuico_reference",
+    "nuico_name",
+    "speed_kmh",
+    "emergency_braking_pct",
+    "ads_state",
+    "failure_mode",
+    "odd_road_type_compliance",
+    "odd_speed_compliance",
+    "odd_time_of_day_compliance",
+    "odd_weather_compliance",
+    "overall_odd_status",
+    "primary_liability",
+    "active_recall_at_incident",
+    "insurance_notification_required",
+    "generated_date",
+    "status",
+    "raw_payload",
+    "_ingested_at_utc",
+    "_correlation_id",
+    "_dq_status",
+    "_source_lane",
+    "_raw_blob_path",
+    "_contract_version"
+  ],
+  "title": "BronzeAsdeIncidentPushRow",
+  "type": "object",
+  "x-dft-av-contract": {
+    "contract_id": "bronze-asde-incident-push",
+    "contract_version": "1.0.0",
+    "doctype_slug": "si-inv",
+    "source_relpath": "schemas/bronze/bronze-asde-incident-push-v1.yaml"
+  }
+}

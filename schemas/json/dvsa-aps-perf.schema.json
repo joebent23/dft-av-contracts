@@ -1,0 +1,128 @@
+{
+  "$id": "https://contracts.dft-av.example.gov.uk/json/dvsa-aps-perf.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Row model for ``bronze_dvsa_aps_perf`` (bronze layer).",
+  "properties": {
+    "_contract_version": {
+      "description": "Audit column \u2014 semver of the Bronze ODCS contract under which this row was written (matches metadata.version). Lets Silver and the DQ Gate detect contract drift without re-reading the YAML.\n",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "_correlation_id": {
+      "description": "Audit column \u2014 UUID linking the row to the upload batch.",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "_dq_status": {
+      "description": "Audit column \u2014 DQ Gate verdict set by internal data lineage.",
+      "title": "Dq Status",
+      "type": "string"
+    },
+    "_ingested_at_utc": {
+      "description": "Audit column \u2014 UTC timestamp when the row landed in Bronze.",
+      "format": "date-time",
+      "title": "Ingested At Utc",
+      "type": "string"
+    },
+    "_raw_blob_path": {
+      "description": "Audit column \u2014 full ABFSS / S3 / queue URI of the raw payload as it landed in the source landing zone. Used for forensic replay and Purview lineage back to the raw blob. Supersedes the older _source_file audit column (kept for backward compatibility with ADR-002 v1 consumers); new ingest notebooks MUST set both to the same value when the source is file-shaped.\n",
+      "title": "Raw Blob Path",
+      "type": "string"
+    },
+    "_source_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Audit column \u2014 source CSV filename or URI.",
+      "title": "Source File"
+    },
+    "_source_lane": {
+      "description": "Audit column \u2014 internal ingest lane that delivered this row.",
+      "title": "Source Lane",
+      "type": "string"
+    },
+    "ads_interventions_per_1000km": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Number of ADS hand-back / safety driver intervention events per 1000 km of journey distance. Range 5.0\u201360.0. Lower is better. Source CSV header \"ADS Interventions per 1000km\".\n",
+      "title": "Ads Interventions Per 1000Km"
+    },
+    "journeys": {
+      "description": "Count of completed passenger journeys on the route in the reporting month. Realistic range 3,000\u20136,000 per synth-rules table 4. Source CSV header \"Journeys\".\n",
+      "title": "Journeys",
+      "type": "integer"
+    },
+    "on_time_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Share of journeys arriving within the DVSA-defined on-time window. Range 88.0\u201399.0. Source CSV header \"On-Time Pct\".\n",
+      "title": "On Time Pct"
+    },
+    "passenger_satisfaction": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Mean passenger satisfaction score on a 1.0\u20135.0 scale. Realistic range 3.0\u20135.0. Source CSV header \"Passenger Satisfaction\".\n",
+      "title": "Passenger Satisfaction"
+    },
+    "route_description": {
+      "description": "Human-readable route description, typically \"<Origin> to <Destination>\". Source CSV header \"Route Description\".\n",
+      "title": "Route Description",
+      "type": "string"
+    },
+    "route_ref": {
+      "description": "APS route natural key (e.g. \"FR-001\"). 2-letter operator prefix + sequence. FK to dim_permits.routes once Silver joins on the semicolon-split list. Source CSV header \"Route Ref\".\n",
+      "title": "Route Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "route_ref",
+    "route_description",
+    "journeys",
+    "on_time_pct",
+    "ads_interventions_per_1000km",
+    "passenger_satisfaction",
+    "_ingested_at_utc",
+    "_correlation_id",
+    "_dq_status",
+    "_source_lane",
+    "_raw_blob_path",
+    "_contract_version"
+  ],
+  "title": "BronzeDvsaApsPerfRow",
+  "type": "object",
+  "x-dft-av-contract": {
+    "contract_id": "bronze-dvsa-aps-perf",
+    "contract_version": "1.0.0",
+    "doctype_slug": "dvsa-aps-perf",
+    "source_relpath": "schemas/bronze/bronze-dvsa-aps-perf-v1.yaml"
+  }
+}
