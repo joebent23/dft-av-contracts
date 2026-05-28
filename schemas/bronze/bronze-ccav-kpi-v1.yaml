@@ -243,6 +243,26 @@ history:
     approvers:
       - CCAV Regulatory Analytics Data Product Owner
 
+# Phase-2 ingest routing block. Drives codegen of RouteMeta, JSON Schema, and
+# APIM ingest-API operation Bicep. Consumed by both dft-av-platform (APIM/
+# Functions) and dft-av-cockpit (upload proxy). See ADR-0003.
+routing:
+  doctype_slug: nuico-ccav-kpi
+  lane: 5
+  apim_api: ingest
+  apim_route: /ccav/kpi-quarterly
+  http_method: POST
+  required_personas:
+    - ccav_analyst
+  required_headers:
+    - x-correlation-id
+    - x-contract-version
+  publishes_event: true
+  event:
+    type: dft.av.nuico-ccav-kpi.ingested.v1
+    subject_template: "ccavKpi/{quarter}"
+    grid_topic_name: dft-av-egt-{env}
+
 customProperties:
   dft-av.owner-agency: CCAV
   dft-av.sensitivity: OFFICIAL-SENSITIVE

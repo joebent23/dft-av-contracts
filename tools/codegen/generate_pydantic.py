@@ -33,9 +33,11 @@ For Bronze contracts, the five mandatory audit columns documented in
 
 from __future__ import annotations
 
+import importlib
+import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -45,6 +47,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 PYTHON_PKG_DIR = REPO_ROOT / "python" / "dft_av_contracts"
+JSON_SCHEMAS_DIR = REPO_ROOT / "schemas" / "json"
+# Default APIM op Bicep output: sibling platform repo's modules dir.
+# Override via --apim-ops-out or DFT_AV_APIM_OPS_OUT env var when the platform
+# repo lives elsewhere (e.g. CI vendoring).
+DEFAULT_APIM_OPS_OUT = REPO_ROOT.parent / "dft-av-platform" / "iac" / "bicep" / "modules" / "apim-ops"
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 CONTRACT_KINDS = ("bronze", "source")
@@ -184,6 +191,26 @@ class FieldSpec:
 
 
 @dataclass
+class RoutingSpec:
+    """Phase-2 ingest routing metadata pulled from a contract YAML's
+    top-level ``routing:`` block. Drives RouteMeta emission, JSON Schema
+    publication, and the APIM ingest-API operation Bicep snippet.
+    Only set on contracts that participate in APIM ingest (Lanes 4/5).
+    """
+    doctype_slug: str
+    lane: int
+    apim_api: str
+    apim_route: str
+    http_method: str
+    required_personas: list[str]
+    required_headers: list[str]
+    publishes_event: bool
+    event_type: str | None
+    event_subject_template: str | None
+    event_grid_topic_name: str | None
+
+
+@dataclass
 class EntitySpec:
     kind: str               # bronze | source
     contract_id: str
@@ -193,6 +220,7 @@ class EntitySpec:
     module_name: str
     source_relpath: str
     fields: list[FieldSpec]
+    routing: RoutingSpec | None = None
 
     @property
     def needs_datetime(self) -> bool:
@@ -335,6 +363,26 @@ def build_field(prop: dict) -> FieldSpec | None:
     )
 
 
+def parse_routing(doc: dict) -> RoutingSpec | None:
+    raw = doc.get("routing")
+    if not isinstance(raw, dict):
+        return None
+    event = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+    return RoutingSpec(
+        doctype_slug=str(raw["doctype_slug"]),
+        lane=int(raw["lane"]),
+        apim_api=str(raw.get("apim_api", "ingest")),
+        apim_route=str(raw["apim_route"]),
+        http_method=str(raw.get("http_method", "POST")).upper(),
+        required_personas=list(raw.get("required_personas") or []),
+        required_headers=list(raw.get("required_headers") or []),
+        publishes_event=bool(raw.get("publishes_event", False)),
+        event_type=(event or {}).get("type"),
+        event_subject_template=(event or {}).get("subject_template"),
+        event_grid_topic_name=(event or {}).get("grid_topic_name"),
+    )
+
+
 def build_entities_for_file(path: Path) -> list[EntitySpec]:
     with path.open("r", encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
@@ -395,6 +443,22 @@ def build_entities_for_file(path: Path) -> list[EntitySpec]:
                 fields=fields,
             )
         )
+
+    # Attach the contract-level routing block (if any) to the first/primary
+    # entity. We require single-entity ingest contracts so routing semantics
+    # stay unambiguous; raise if a multi-entity contract carries routing.
+    routing = parse_routing(doc)
+    if routing is not None:
+        if not specs:
+            raise ValueError(
+                f"{path}: declares routing: but no entities were extracted"
+            )
+        if len(specs) > 1:
+            raise ValueError(
+                f"{path}: routing: block requires a single entity contract; "
+                f"got {len(specs)} entities ({[s.entity_name for s in specs]})"
+            )
+        specs[0].routing = routing
     return specs
 
 
@@ -434,6 +498,216 @@ _GENERATED_BEGIN = "# --- BEGIN GENERATED RE-EXPORTS (do not edit) ---"
 _GENERATED_END = "# --- END GENERATED RE-EXPORTS ---"
 
 
+def render_routes_module(entities: list[EntitySpec]) -> list[EntitySpec]:
+    """Emit ``_routes.py`` containing RouteMeta dataclass and ROUTES dict
+    keyed by doctype_slug. Returns the list of entities that contributed a
+    route (for downstream JSON Schema + Bicep emission).
+    """
+    routed = [e for e in entities if e.routing is not None]
+    routed_sorted = sorted(routed, key=lambda e: e.routing.doctype_slug)  # type: ignore[union-attr]
+
+    # Detect duplicate slugs eagerly so the failure mode is obvious.
+    seen: dict[str, str] = {}
+    for e in routed_sorted:
+        slug = e.routing.doctype_slug  # type: ignore[union-attr]
+        if slug in seen:
+            raise ValueError(
+                f"Duplicate routing.doctype_slug '{slug}' in "
+                f"{seen[slug]} and {e.source_relpath}"
+            )
+        seen[slug] = e.source_relpath
+
+    lines: list[str] = [
+        '"""Auto-generated. DO NOT EDIT BY HAND.',
+        "",
+        "Ingest route registry compiled from contract YAML ``routing:`` blocks.",
+        "Regenerate via ``tools/codegen/generate_pydantic.py``.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from dataclasses import dataclass, field",
+        "from typing import Type",
+        "",
+        "from pydantic import BaseModel",
+        "",
+    ]
+    for e in routed_sorted:
+        lines.append(f"from .{e.module_name} import {e.class_name}")
+    lines.append("")
+    lines.append("")
+    lines.append("@dataclass(frozen=True)")
+    lines.append("class RouteMeta:")
+    lines.append('    """Ingest route metadata for one contract doctype_slug."""')
+    lines.append("    doctype_slug: str")
+    lines.append("    contract_id: str")
+    lines.append("    contract_version: str")
+    lines.append("    lane: int")
+    lines.append("    apim_api: str")
+    lines.append("    apim_route: str")
+    lines.append("    http_method: str")
+    lines.append("    required_personas: tuple[str, ...]")
+    lines.append("    required_headers: tuple[str, ...]")
+    lines.append("    publishes_event: bool")
+    lines.append("    event_type: str | None")
+    lines.append("    event_subject_template: str | None")
+    lines.append("    event_grid_topic_name: str | None")
+    lines.append("    pydantic_model: Type[BaseModel]")
+    lines.append("    json_schema_filename: str")
+    lines.append("")
+    lines.append("")
+    lines.append("ROUTES: dict[str, RouteMeta] = {")
+    for e in routed_sorted:
+        r = e.routing  # type: ignore[assignment]
+        lines.append(f'    "{r.doctype_slug}": RouteMeta(')
+        lines.append(f'        doctype_slug="{r.doctype_slug}",')
+        lines.append(f'        contract_id="{e.contract_id}",')
+        lines.append(f'        contract_version="{e.contract_version}",')
+        lines.append(f"        lane={r.lane},")
+        lines.append(f'        apim_api="{r.apim_api}",')
+        lines.append(f'        apim_route="{r.apim_route}",')
+        lines.append(f'        http_method="{r.http_method}",')
+        lines.append(f"        required_personas={tuple(r.required_personas)!r},")
+        lines.append(f"        required_headers={tuple(r.required_headers)!r},")
+        lines.append(f"        publishes_event={r.publishes_event!r},")
+        lines.append(f"        event_type={r.event_type!r},")
+        lines.append(f"        event_subject_template={r.event_subject_template!r},")
+        lines.append(f"        event_grid_topic_name={r.event_grid_topic_name!r},")
+        lines.append(f"        pydantic_model={e.class_name},")
+        lines.append(f'        json_schema_filename="{r.doctype_slug}.schema.json",')
+        lines.append("    ),")
+    lines.append("}")
+    lines.append("")
+    lines.append('__all__ = ["RouteMeta", "ROUTES"]')
+    lines.append("")
+
+    (PYTHON_PKG_DIR / "_routes.py").write_text("\n".join(lines), encoding="utf-8")
+    return routed_sorted
+
+
+def render_json_schemas(routed_entities: list[EntitySpec]) -> None:
+    """Dump a Draft-2020-12 JSON Schema per routed entity.
+
+    Imports the freshly written Pydantic modules to call
+    ``model.model_json_schema()`` so the JSON contract stays byte-for-byte
+    aligned with the Python model that ingest will actually validate
+    against.
+    """
+    if not routed_entities:
+        return
+    JSON_SCHEMAS_DIR.mkdir(parents=True, exist_ok=True)
+    python_root = str(REPO_ROOT / "python")
+    if python_root not in sys.path:
+        sys.path.insert(0, python_root)
+    # Force fresh import in case the script is re-run in the same process.
+    pkg = importlib.import_module("dft_av_contracts")
+    importlib.reload(pkg)
+    for e in routed_entities:
+        mod = importlib.import_module(f"dft_av_contracts.{e.module_name}")
+        importlib.reload(mod)
+        model = getattr(mod, e.class_name)
+        schema = model.model_json_schema(mode="validation")
+        schema["$id"] = (
+            f"https://contracts.dft-av.example.gov.uk/json/"
+            f"{e.routing.doctype_slug}.schema.json"  # type: ignore[union-attr]
+        )
+        schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+        schema["x-dft-av-contract"] = {
+            "contract_id": e.contract_id,
+            "contract_version": e.contract_version,
+            "doctype_slug": e.routing.doctype_slug,  # type: ignore[union-attr]
+            "source_relpath": e.source_relpath,
+        }
+        out = JSON_SCHEMAS_DIR / f"{e.routing.doctype_slug}.schema.json"  # type: ignore[union-attr]
+        out.write_text(
+            json.dumps(schema, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
+_BICEP_HEADER = (
+    "// Auto-generated from {source_relpath}. DO NOT EDIT BY HAND.\n"
+    "// Doctype slug:    {slug}\n"
+    "// Contract:        {contract_id} v{contract_version}\n"
+    "// Lane:            {lane}\n"
+    "// APIM API:        {apim_api}\n"
+    "// Regenerate via tools/codegen/generate_pydantic.py.\n"
+)
+
+
+def render_apim_ops_bicep(routed_entities: list[EntitySpec], out_dir: Path) -> None:
+    """Emit one APIM operation Bicep module per ingest route.
+
+    Each module is a thin, parameterised resource that the platform repo's
+    apim-ingest API composes into its operation set. The module is
+    deliberately decoupled from the API definition so platform owners can
+    swap policies independently.
+    """
+    if not routed_entities:
+        return
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for e in routed_entities:
+        r = e.routing  # type: ignore[assignment]
+        header = _BICEP_HEADER.format(
+            source_relpath=e.source_relpath,
+            slug=r.doctype_slug,
+            contract_id=e.contract_id,
+            contract_version=e.contract_version,
+            lane=r.lane,
+            apim_api=r.apim_api,
+        )
+        headers_block = "\n".join(
+            f"      {{ name: '{h}', required: true, type: 'string', values: [] }}"
+            for h in r.required_headers
+        )
+        display_name = f"Ingest {r.doctype_slug} ({e.contract_id} v{e.contract_version})"
+        body = f"""{header}
+@description('Name of the APIM service in this resource group.')
+param apimName string
+
+@description('Name of the parent ingest API inside APIM (defaults to apim-ingest).')
+param apiName string = 'apim-ingest'
+
+resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' existing = {{
+  name: '${{apimName}}/${{apiName}}'
+}}
+
+resource op 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {{
+  parent: api
+  name: '{r.doctype_slug}'
+  properties: {{
+    displayName: '{display_name}'
+    method: '{r.http_method}'
+    urlTemplate: '{r.apim_route}'
+    description: 'Ingest doctype {r.doctype_slug}. Personas: {", ".join(r.required_personas) or "n/a"}.'
+    request: {{
+      headers: [
+{headers_block}
+      ]
+      representations: [
+        {{
+          contentType: 'application/json'
+          schemaId: '{r.doctype_slug}'
+          typeName: '{e.class_name}'
+        }}
+      ]
+    }}
+    responses: [
+      {{ statusCode: 202, description: 'Accepted for ingest' }}
+      {{ statusCode: 400, description: 'Schema or header validation failed' }}
+      {{ statusCode: 401, description: 'Missing or invalid persona subscription key' }}
+      {{ statusCode: 413, description: 'Payload exceeds documented size cap' }}
+    ]
+  }}
+}}
+
+output operationName string = op.name
+output urlTemplate string = '{r.apim_route}'
+"""
+        out = out_dir / f"{r.doctype_slug}.bicep"
+        out.write_text(body, encoding="utf-8")
+
+
 def update_init(entities: list[EntitySpec]) -> None:
     init_path = PYTHON_PKG_DIR / "__init__.py"
     if init_path.is_file():
@@ -455,9 +729,12 @@ def update_init(entities: list[EntitySpec]) -> None:
     for spec in sorted(entities, key=lambda s: s.module_name):
         lines.append(f"from .{spec.module_name} import {spec.class_name}")
         exports.append(spec.class_name)
+    lines.append("from ._routes import ROUTES, RouteMeta")
     lines.append("")
     lines.append("__all__ = [")
     lines.append('    "__version__",')
+    lines.append('    "ROUTES",')
+    lines.append('    "RouteMeta",')
     for name in exports:
         lines.append(f'    "{name}",')
     lines.append("]")
@@ -471,7 +748,22 @@ def update_init(entities: list[EntitySpec]) -> None:
 # Entry point
 # --------------------------------------------------------------------------- #
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--apim-ops-out",
+        type=Path,
+        default=Path(os.environ.get("DFT_AV_APIM_OPS_OUT", str(DEFAULT_APIM_OPS_OUT))),
+        help=(
+            "Directory for generated APIM operation Bicep modules. "
+            f"Defaults to {DEFAULT_APIM_OPS_OUT} (sibling platform repo)."
+        ),
+    )
+    args = parser.parse_args(argv)
+
     contracts = list(iter_contract_files())
     if not contracts:
         print(f"WARNING: no contracts found under {SCHEMAS_DIR}", file=sys.stderr)
@@ -487,9 +779,19 @@ def main() -> int:
 
     render_modules(all_entities)
     update_init(all_entities)
+    routed = render_routes_module(all_entities)
+    render_json_schemas(routed)
+    render_apim_ops_bicep(routed, args.apim_ops_out)
 
+    apim_target = args.apim_ops_out
+    try:
+        apim_target = apim_target.resolve().relative_to(REPO_ROOT.parent)
+    except ValueError:
+        apim_target = args.apim_ops_out.resolve()
     print(
-        f"Generated {len(all_entities)} models from {len(contracts)} contracts"
+        f"Generated {len(all_entities)} models from {len(contracts)} contracts; "
+        f"{len(routed)} routes, JSON schemas in {JSON_SCHEMAS_DIR.relative_to(REPO_ROOT)}, "
+        f"APIM op Bicep in {apim_target}"
     )
     return 0
 

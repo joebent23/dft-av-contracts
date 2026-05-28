@@ -519,6 +519,26 @@ history:
       - DVSA Statutory Inspector Data Product Owner
       - Insurers release Data Product Owner
 
+# Phase-2 ingest routing block. Drives codegen of RouteMeta, JSON Schema, and
+# APIM ingest-API operation Bicep. Consumed by both dft-av-platform (APIM/
+# Functions) and dft-av-cockpit (upload proxy). See ADR-0003.
+routing:
+  doctype_slug: si-inv
+  lane: 4
+  apim_api: ingest
+  apim_route: /asde/incident-liability
+  http_method: POST
+  required_personas:
+    - statutory_inspector
+  required_headers:
+    - x-correlation-id
+    - x-contract-version
+  publishes_event: true
+  event:
+    type: dft.av.si-inv.ingested.v1
+    subject_template: "siInv/{investigation_reference}"
+    grid_topic_name: dft-av-egt-{env}
+
 customProperties:
   dft-av.owner-agency: ASDE
   dft-av.sensitivity: OFFICIAL-SENSITIVE

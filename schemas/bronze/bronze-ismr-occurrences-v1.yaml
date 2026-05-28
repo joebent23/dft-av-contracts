@@ -263,6 +263,26 @@ history:
       - NUiCO ISMR Operator Reporting Data Product Owner
       - Insurers release Data Product Owner
 
+# Phase-2 ingest routing block. Drives codegen of RouteMeta, JSON Schema, and
+# APIM ingest-API operation Bicep. Consumed by both dft-av-platform (APIM/
+# Functions) and dft-av-cockpit (upload proxy). See ADR-0003.
+routing:
+  doctype_slug: si-ismr
+  lane: 5
+  apim_api: ingest
+  apim_route: /nuico/ismr-occurrences
+  http_method: POST
+  required_personas:
+    - nuico_compliance
+  required_headers:
+    - x-correlation-id
+    - x-contract-version
+  publishes_event: true
+  event:
+    type: dft.av.si-ismr.ingested.v1
+    subject_template: "siIsmr/{period}"
+    grid_topic_name: dft-av-egt-{env}
+
 customProperties:
   dft-av.owner-agency: NUiCO
   dft-av.sensitivity: OFFICIAL-SENSITIVE

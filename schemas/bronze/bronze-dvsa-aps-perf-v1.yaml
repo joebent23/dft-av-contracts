@@ -263,6 +263,26 @@ history:
     approvers:
       - DVSA APS Performance Data Product Owner
 
+# Phase-2 ingest routing block. Drives codegen of RouteMeta, JSON Schema, and
+# APIM ingest-API operation Bicep. Consumed by both dft-av-platform (APIM/
+# Functions) and dft-av-cockpit (upload proxy). See ADR-0003.
+routing:
+  doctype_slug: dvsa-aps-perf
+  lane: 5
+  apim_api: ingest
+  apim_route: /dvsa/aps-performance
+  http_method: POST
+  required_personas:
+    - nuico_compliance
+  required_headers:
+    - x-correlation-id
+    - x-contract-version
+  publishes_event: true
+  event:
+    type: dft.av.dvsa-aps-perf.ingested.v1
+    subject_template: "dvsaApsPerf/{route_ref}/{period_month}"
+    grid_topic_name: dft-av-egt-{env}
+
 customProperties:
   dft-av.owner-agency: DVSA
   dft-av.sensitivity: OFFICIAL-SENSITIVE
