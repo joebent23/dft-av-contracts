@@ -54,6 +54,13 @@ schema:
       description: >
         17-character VIN of the vehicle involved (ISO 3779). Excludes I, O, Q.
         Source JSON field `vehicleVin`.
+    - name: vehicle_registration_mark
+      type: string
+      nullable: true
+      description: >
+        Optional UK vehicle registration mark (commonly formatted like "AB12 ABC").
+        Source JSON field `vehicleRegistrationMark`. Kept optional for
+        backwards-compatibility with partners that do not supply registration.
     - name: operator_licence_reference
       type: string
       nullable: false
@@ -332,6 +339,7 @@ customProperties:
     - asdeReference
     - incidentAtUtc
     - vehicleVin
+    - vehicleRegistrationMark
     - operatorLicenceReference
     - incidentClass
     - severity
